@@ -45,11 +45,28 @@ export async function GET() {
     const supabase = getSupabase();
     const publicClient = getPublicClient();
 
-    // Get all active delegations
-    const { data: delegations, error } = await supabase
+    // Get all active delegations (try with smart_account_address, fall back if column doesn't exist)
+    let delegations: any[] | null = null;
+    let error: any = null;
+    
+    // Try with smart_account_address first
+    const result = await supabase
       .from('delegations')
       .select('user_address, smart_account_address')
       .gt('expires_at', new Date().toISOString());
+    
+    if (result.error?.code === '42703') {
+      // Column doesn't exist, try without it
+      const fallbackResult = await supabase
+        .from('delegations')
+        .select('user_address')
+        .gt('expires_at', new Date().toISOString());
+      delegations = fallbackResult.data;
+      error = fallbackResult.error;
+    } else {
+      delegations = result.data;
+      error = result.error;
+    }
 
     if (error) {
       console.error('Failed to fetch delegations:', error);
