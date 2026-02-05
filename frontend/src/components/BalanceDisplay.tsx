@@ -161,7 +161,7 @@ export function BalanceDisplay() {
               </div>
               <div>
                 <p className="font-medium text-white">ETH</p>
-                <p className="text-xs text-gray-500">For gas</p>
+                <p className="text-xs text-gray-500">Sells during greed</p>
               </div>
             </div>
             <div className="text-right">

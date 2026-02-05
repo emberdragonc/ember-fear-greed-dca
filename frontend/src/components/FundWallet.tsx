@@ -194,7 +194,7 @@ export function FundWallet({ onFunded }: FundWalletProps) {
       {!isFunded ? (
         <div className="p-3 bg-yellow-500/10 rounded-xl border border-yellow-500/20">
           <p className="text-sm text-yellow-400">
-            ⚠️ Minimum ${MIN_USDC_BALANCE} USDC required. Deposit USDC above + small ETH for gas.
+            ⚠️ Minimum ${MIN_USDC_BALANCE} USDC required to start DCA buying.
           </p>
         </div>
       ) : (
