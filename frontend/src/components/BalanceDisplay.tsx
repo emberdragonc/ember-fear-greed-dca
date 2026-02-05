@@ -2,11 +2,11 @@
 'use client';
 
 import { useState } from 'react';
-import { useAccount, useBalance, useReadContract, useSendTransaction, useWriteContract } from 'wagmi';
+import { useAccount, useBalance, useReadContract, useSendTransaction, useWriteContract, usePublicClient } from 'wagmi';
 import { base } from 'wagmi/chains';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { TOKENS } from '@/lib/swap';
-import { formatUnits, parseUnits, parseEther } from 'viem';
+import { formatUnits, parseUnits, parseEther, encodeFunctionData } from 'viem';
 
 // ERC20 ABI
 const erc20Abi = [
@@ -31,7 +31,8 @@ const erc20Abi = [
 
 export function BalanceDisplay() {
   const { address: eoaAddress } = useAccount();
-  const { smartAccountAddress } = useSmartAccountContext();
+  const { smartAccountAddress, smartAccount } = useSmartAccountContext();
+  const publicClient = usePublicClient();
   
   const [depositAmount, setDepositAmount] = useState('');
   const [depositToken, setDepositToken] = useState<'ETH' | 'USDC'>('USDC');
@@ -104,28 +105,44 @@ export function BalanceDisplay() {
   };
 
   const handleWithdraw = async () => {
-    if (!smartAccountAddress || !eoaAddress || !withdrawAmount) return;
+    if (!smartAccountAddress || !eoaAddress || !withdrawAmount || !smartAccount || !publicClient) return;
 
     setIsWithdrawing(true);
     try {
-      // Direct withdrawal from smart account (user owns it, no delegation needed)
-      // The "smart account" in this context is actually the same as EOA for RainbowKit
-      // So we just need to send the tokens to themselves (or they're already there)
+      // Withdraw FROM the smart account using its execute method
+      // The smart account can execute calls on behalf of the owner (EOA)
+      
+      let calls: { to: `0x${string}`; value: bigint; data: `0x${string}` }[];
       
       if (withdrawToken === 'ETH') {
-        // ETH: Direct send to EOA
-        await sendTransaction({
+        // ETH: Send value to EOA
+        calls = [{
           to: eoaAddress as `0x${string}`,
           value: parseEther(withdrawAmount),
-        });
+          data: '0x' as `0x${string}`,
+        }];
       } else {
-        // USDC: Transfer to EOA
-        await writeContract({
-          address: TOKENS.USDC,
+        // USDC: Call transfer on USDC contract
+        const transferData = encodeFunctionData({
           abi: erc20Abi,
           functionName: 'transfer',
           args: [eoaAddress as `0x${string}`, parseUnits(withdrawAmount, 6)],
-        } as any);
+        });
+        calls = [{
+          to: TOKENS.USDC as `0x${string}`,
+          value: 0n,
+          data: transferData,
+        }];
+      }
+
+      // Execute through the smart account
+      const userOpHash = await smartAccount.sendUserOperation({ calls });
+      
+      // Wait for the user operation to be included
+      const receipt = await smartAccount.waitForUserOperation({ hash: userOpHash });
+      
+      if (!receipt.success) {
+        throw new Error('User operation failed');
       }
       
       setWithdrawAmount('');
@@ -136,6 +153,7 @@ export function BalanceDisplay() {
         refetchUsdc();
       }, 5000);
       
+      alert('Withdrawal successful!');
     } catch (error) {
       console.error('Withdraw failed:', error);
       alert(error instanceof Error ? error.message : 'Withdrawal failed');
