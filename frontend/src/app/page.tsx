@@ -314,7 +314,7 @@ export default function Home() {
                     {[
                       { step: 1, title: 'Create Smart Account', desc: 'A secure ERC-4337 wallet for automated trading' },
                       { step: 2, title: 'Fund Your Wallet', desc: 'Deposit USDC to start buying, ETH to enable selling' },
-                      { step: 3, title: 'Activate DCA', desc: 'Sign delegation to enable automated swaps' },
+                      { step: 3, title: 'Activate DCA', desc: 'Sign delegation to enable automated swaps and withdrawals' },
                     ].map((item) => (
                       <div key={item.step} className="flex gap-4">
                         <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold shrink-0 border border-blue-500/30">
