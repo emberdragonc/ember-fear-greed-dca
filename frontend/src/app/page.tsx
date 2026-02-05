@@ -4,7 +4,7 @@ import { useAccount } from 'wagmi';
 import { WalletConnect } from '@/components/WalletConnect';
 import { SmartAccountCard } from '@/components/SmartAccountCard';
 import { DelegationSetup } from '@/components/DelegationSetup';
-import { FearGreedGauge } from '@/components/FearGreedGauge';
+import FearGreedGauge from '@/components/FearGreedGauge';
 
 export default function Home() {
   const { isConnected } = useAccount();
