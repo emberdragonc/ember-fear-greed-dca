@@ -6,7 +6,11 @@ import { useDelegation } from '@/hooks/useDelegation';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { formatExpiryDate, DELEGATION_CONFIG, DELEGATION_ADDRESSES } from '@/lib/delegation';
 
-export function DelegationSetup() {
+interface DelegationSetupProps {
+  isFunded?: boolean;
+}
+
+export function DelegationSetup({ isFunded = false }: DelegationSetupProps) {
   const {
     state,
     createAndSignDelegation,
@@ -17,6 +21,7 @@ export function DelegationSetup() {
   
   const { state: smartAccountState, smartAccountAddress } = useSmartAccountContext();
   const hasSmartAccount = smartAccountState.status === 'created' && !!smartAccountAddress;
+  const canActivate = hasSmartAccount && isFunded;
 
   const [basePercentage, setBasePercentage] = useState(2.5);
   const [targetAsset, setTargetAsset] = useState('ETH');
@@ -119,8 +124,17 @@ export function DelegationSetup() {
 
   // Setup form
   return (
-    <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">
-      <h3 className="text-lg font-semibold text-white mb-4">
+    <div className={`p-6 rounded-2xl border backdrop-blur-sm ${
+      canActivate ? 'bg-white/5 border-white/10' : 'bg-white/[0.02] border-white/5'
+    }`}>
+      <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold ${
+          canActivate 
+            ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' 
+            : 'bg-gray-500/20 text-gray-500 border border-gray-500/30'
+        }`}>
+          3
+        </span>
         Configure DCA Delegation
       </h3>
 
@@ -208,9 +222,9 @@ export function DelegationSetup() {
 
       <button
         onClick={handleGrant}
-        disabled={!hasSmartAccount}
+        disabled={!canActivate}
         className={`w-full px-4 py-3 rounded-xl font-semibold transition-all ${
-          hasSmartAccount
+          canActivate
             ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-500 hover:to-indigo-500 shadow-lg shadow-blue-500/20'
             : 'bg-gray-600/50 text-gray-400 cursor-not-allowed'
         }`}
@@ -218,9 +232,11 @@ export function DelegationSetup() {
         Sign & Activate DCA
       </button>
       
-      {!hasSmartAccount && (
+      {!canActivate && (
         <p className="mt-3 text-center text-sm text-gray-500">
-          ↑ Create your Smart Account first
+          {!hasSmartAccount 
+            ? '↑ Complete steps 1 & 2 first'
+            : '↑ Fund your wallet first (Step 2)'}
         </p>
       )}
     </div>

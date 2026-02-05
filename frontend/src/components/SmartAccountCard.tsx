@@ -53,10 +53,13 @@ export function SmartAccountCard() {
       : `https://sepolia.basescan.org/address/${smartAccountAddress}`;
 
     return (
-      <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">
+      <div className="p-6 bg-emerald-500/10 rounded-2xl border border-emerald-500/20 backdrop-blur-sm">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-white">
-            Smart Account
+          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+            <span className="w-6 h-6 rounded-full bg-emerald-500 flex items-center justify-center text-sm font-bold text-white">
+              ✓
+            </span>
+            Smart Account Created
           </h3>
           <span className={`px-3 py-1 text-xs font-medium rounded-full ${
             isDeployed 
@@ -121,10 +124,8 @@ export function SmartAccountCard() {
   return (
     <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">
       <div className="text-center">
-        <div className="w-14 h-14 mx-auto mb-4 bg-gradient-to-br from-blue-500/20 to-purple-500/20 rounded-2xl flex items-center justify-center border border-blue-500/20">
-          <svg className="w-7 h-7 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-          </svg>
+        <div className="w-10 h-10 mx-auto mb-4 rounded-full bg-blue-500/20 flex items-center justify-center border border-blue-500/30">
+          <span className="text-lg font-bold text-blue-400">1</span>
         </div>
         <h3 className="text-lg font-semibold text-white mb-2">
           Create Smart Account

@@ -1,8 +1,10 @@
 'use client';
 
+import { useState, useCallback } from 'react';
 import { useAccount } from 'wagmi';
 import { WalletConnect } from '@/components/WalletConnect';
 import { SmartAccountCard } from '@/components/SmartAccountCard';
+import { FundWallet } from '@/components/FundWallet';
 import { DelegationSetup } from '@/components/DelegationSetup';
 import { BalanceDisplay } from '@/components/BalanceDisplay';
 import { DCAExecutor } from '@/components/DCAExecutor';
@@ -15,6 +17,11 @@ export default function Home() {
   const { isConnected } = useAccount();
   const { data: fgData } = useFearGreed();
   const { stats } = useProtocolStats();
+  const [isFunded, setIsFunded] = useState(false);
+  
+  const handleFundedChange = useCallback((funded: boolean) => {
+    setIsFunded(funded);
+  }, []);
 
   // Format large numbers
   const formatUSD = (value: number) => {
@@ -272,7 +279,8 @@ export default function Home() {
             {/* Right column - Account & Delegation */}
             <div className="lg:col-span-2 space-y-6">
               <SmartAccountCard />
-              <DelegationSetup />
+              <FundWallet onFunded={handleFundedChange} />
+              <DelegationSetup isFunded={isFunded} />
               
               {/* How it works */}
               <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">
