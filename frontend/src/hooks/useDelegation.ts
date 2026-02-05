@@ -3,7 +3,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useAccount, usePublicClient, useWalletClient } from 'wagmi';
-import { type Address, keccak256, encodePacked, toHex } from 'viem';
+import { type Address, keccak256, encodePacked } from 'viem';
+import { createClient } from '@supabase/supabase-js';
 import {
   DELEGATION_ADDRESSES,
   BACKEND_SIGNER,
@@ -17,6 +18,13 @@ import {
   type StoredDelegation,
   type DelegationStatus,
 } from '@/lib/delegation';
+
+// Supabase client
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabase = supabaseUrl && supabaseKey 
+  ? createClient(supabaseUrl, supabaseKey) 
+  : null;
 
 interface DelegationState {
   status: 'idle' | 'loading' | 'created' | 'signed' | 'error';
@@ -69,6 +77,64 @@ export function useDelegation(): UseDelegationReturn {
       }
     }
   }, [address, isConnected]);
+
+  // Save delegation to Supabase
+  const saveDelegationToDb = async (delegation: StoredDelegation) => {
+    if (!supabase) {
+      console.warn('Supabase not configured, delegation only stored locally');
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('delegations')
+        .upsert({
+          user_address: delegation.delegator.toLowerCase(),
+          delegation_hash: delegation.delegationHash,
+          delegation_signature: delegation.signature,
+          delegation_data: JSON.stringify({
+            delegate: delegation.delegate,
+            delegator: delegation.delegator,
+            caveats: {
+              ...delegation.caveats,
+              expiry: delegation.caveats.expiry.toString(),
+            },
+            basePercentage: delegation.basePercentage,
+            targetAsset: delegation.targetAsset,
+          }),
+          max_amount_per_swap: DELEGATION_CONFIG.MAX_SWAP_AMOUNT_USDC.toString(),
+          expires_at: delegation.expiresAt,
+        }, {
+          onConflict: 'user_address',
+        });
+
+      if (error) {
+        console.error('Failed to save delegation to DB:', error);
+      } else {
+        console.log('Delegation saved to database');
+      }
+    } catch (err) {
+      console.error('Database error:', err);
+    }
+  };
+
+  // Remove delegation from Supabase
+  const removeDelegationFromDb = async (userAddress: string) => {
+    if (!supabase) return;
+
+    try {
+      const { error } = await supabase
+        .from('delegations')
+        .delete()
+        .eq('user_address', userAddress.toLowerCase());
+
+      if (error) {
+        console.error('Failed to remove delegation from DB:', error);
+      }
+    } catch (err) {
+      console.error('Database error:', err);
+    }
+  };
 
   // Create and sign a new delegation
   const createAndSignDelegation = useCallback(async (
@@ -124,8 +190,7 @@ export function useDelegation(): UseDelegationReturn {
       
       delegationData.delegationHash = delegationHash;
 
-      // Request signature from user
-      // Using EIP-712 typed data for better UX
+      // Request signature from user using EIP-712 typed data
       const typedData = {
         domain: {
           name: 'Fear & Greed DCA',
@@ -156,13 +221,19 @@ export function useDelegation(): UseDelegationReturn {
         },
       };
 
-      const signature = await walletClient.signTypedData({ ...typedData, account: walletClient.account! });
+      const signature = await walletClient.signTypedData({ 
+        ...typedData, 
+        account: walletClient.account! 
+      });
       
       delegationData.signature = signature;
       delegationData.status = 'signed';
 
-      // Save to localStorage (backend will sync later)
+      // Save to localStorage
       saveDelegation(delegationData);
+      
+      // Save to Supabase for backend access
+      await saveDelegationToDb(delegationData);
 
       setState({
         status: 'signed',
@@ -182,7 +253,7 @@ export function useDelegation(): UseDelegationReturn {
 
   // Revoke delegation
   const revokeDelegation = useCallback(async () => {
-    if (!state.delegation) return;
+    if (!state.delegation || !address) return;
     
     setState(prev => ({ ...prev, status: 'loading' }));
     
@@ -190,8 +261,8 @@ export function useDelegation(): UseDelegationReturn {
       // Clear local storage
       clearDelegation();
       
-      // TODO: Call backend to remove delegation from DB
-      // await fetch('/api/delegation/revoke', { ... });
+      // Remove from Supabase
+      await removeDelegationFromDb(address);
       
       setState({
         status: 'idle',
@@ -206,7 +277,7 @@ export function useDelegation(): UseDelegationReturn {
         error: error instanceof Error ? error.message : 'Failed to revoke',
       }));
     }
-  }, [state.delegation]);
+  }, [state.delegation, address]);
 
   // Refresh delegation state
   const refreshDelegation = useCallback(() => {

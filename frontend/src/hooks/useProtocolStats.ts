@@ -1,14 +1,15 @@
-// useProtocolStats - Fetch protocol TVL and volume stats
+// useProtocolStats - Fetch protocol TVL and volume stats from Supabase
 'use client';
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 interface ProtocolStats {
-  tvl: number;           // Total value locked in USD
+  tvl: number;           // Total value locked in USD (placeholder for now)
   volume: number;        // Total volume processed in USD
   wallets: number;       // Number of active wallets
   executions: number;    // Total DCA executions
+  fees: number;          // Total fees collected
 }
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -20,59 +21,70 @@ export function useProtocolStats() {
     volume: 0,
     wallets: 0,
     executions: 0,
+    fees: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
     async function fetchStats() {
+      // Return defaults if Supabase not configured
+      if (!supabaseUrl || !supabaseKey) {
+        setStats({
+          tvl: 0,
+          volume: 0,
+          wallets: 0,
+          executions: 0,
+          fees: 0,
+        });
+        setLoading(false);
+        return;
+      }
+
       try {
-        if (!supabaseUrl || !supabaseKey) {
-          // Return mock data if Supabase not configured
+        const supabase = createClient(supabaseUrl, supabaseKey);
+
+        // Fetch from protocol_overview view
+        const { data, error: fetchError } = await supabase
+          .from('protocol_overview')
+          .select('*')
+          .single();
+
+        if (fetchError) {
+          // View might not exist yet, return defaults
+          console.warn('Protocol stats not available:', fetchError.message);
           setStats({
             tvl: 0,
             volume: 0,
             wallets: 0,
             executions: 0,
+            fees: 0,
           });
-          setLoading(false);
-          return;
+        } else if (data) {
+          // Convert from base units to USD
+          // Assuming volume/fees are in USDC (6 decimals)
+          setStats({
+            tvl: 0, // TODO: Calculate from smart account balances
+            volume: parseFloat(data.total_volume) / 1e6,
+            wallets: data.active_wallets || 0,
+            executions: data.total_executions || 0,
+            fees: parseFloat(data.total_fees) / 1e6,
+          });
         }
-
-        const supabase = createClient(supabaseUrl, supabaseKey);
-
-        // Get unique wallet count
-        const { count: walletCount } = await supabase
-          .from('delegations')
-          .select('*', { count: 'exact', head: true });
-
-        // Get execution count and volume
-        const { data: executions } = await supabase
-          .from('dca_executions')
-          .select('amount_in, amount_out, status')
-          .eq('status', 'success');
-
-        const executionCount = executions?.length || 0;
-        const totalVolume = executions?.reduce((sum, e) => {
-          // Rough USD estimation (would need price feeds for accuracy)
-          const amount = parseFloat(e.amount_out || e.amount_in || '0');
-          return sum + amount;
-        }, 0) || 0;
-
-        setStats({
-          tvl: 0, // Would need to sum smart account balances
-          volume: totalVolume,
-          wallets: walletCount || 0,
-          executions: executionCount,
-        });
-      } catch (error) {
-        console.error('Failed to fetch protocol stats:', error);
+      } catch (err) {
+        console.error('Failed to fetch protocol stats:', err);
+        setError(err instanceof Error ? err : new Error('Failed to fetch stats'));
       } finally {
         setLoading(false);
       }
     }
 
     fetchStats();
+    
+    // Refresh every 60 seconds
+    const interval = setInterval(fetchStats, 60000);
+    return () => clearInterval(interval);
   }, []);
 
-  return { stats, loading };
+  return { stats, loading, error };
 }

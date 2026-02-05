@@ -1,28 +1,53 @@
 // DCA Executor Backend Service
 // Runs daily to check F&G and execute swaps for delegated accounts
+// Uses MetaMask Delegation Framework for secure execution
 
-import { createPublicClient, createWalletClient, http, formatUnits, parseUnits } from 'viem';
+import { 
+  createPublicClient, 
+  createWalletClient, 
+  http, 
+  formatUnits, 
+  parseUnits,
+  encodeFunctionData,
+  erc20Abi,
+  type Address,
+  type Hex,
+} from 'viem';
 import { base } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 import { createClient } from '@supabase/supabase-js';
 
-// Config
+// ============ CONFIG ============
+
 const CHAIN_ID = 8453;
 const TRADING_API = 'https://trade-api.gateway.uniswap.org/v1';
 
-const TOKENS = {
-  ETH: '0x0000000000000000000000000000000000000000',
-  WETH: '0x4200000000000000000000000000000000000006',
-  USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+const ADDRESSES = {
+  // Tokens
+  ETH: '0x0000000000000000000000000000000000000000' as Address,
+  WETH: '0x4200000000000000000000000000000000000006' as Address,
+  USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as Address,
+  // Uniswap
+  UNISWAP_ROUTER: '0x2626664c2603336E57B271c5C0b26F421741e481' as Address,
+  // MetaMask Delegation
+  DELEGATION_MANAGER: '0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3' as Address,
+  // EMBER Staking (fee recipient)
+  EMBER_STAKING: '0x434B2A0e38FB3E5D2ACFa2a7aE492C2A53E55Ec9' as Address,
 } as const;
 
-// Thresholds
+// Fee: 15 basis points = 0.15%
+const FEE_BPS = 15;
+const BPS_DENOMINATOR = 10000;
+
+// F&G Thresholds
 const FG_THRESHOLDS = {
   EXTREME_FEAR_MAX: 25,
   FEAR_MAX: 45,
   NEUTRAL_MAX: 54,
   GREED_MAX: 75,
 };
+
+// ============ TYPES ============
 
 interface DCADecision {
   action: 'buy' | 'sell' | 'hold';
@@ -33,16 +58,25 @@ interface DCADecision {
 interface DelegationRecord {
   id: string;
   user_address: string;
-  smart_account_address: string;
-  base_percentage: number;
-  target_asset: string;
   delegation_hash: string;
-  status: 'active' | 'revoked' | 'expired';
+  delegation_signature: string;
+  delegation_data: string; // JSON stringified delegation
+  max_amount_per_swap: string;
   expires_at: string;
   created_at: string;
 }
 
-// Initialize clients
+interface ExecutionResult {
+  success: boolean;
+  txHash: string | null;
+  error: string | null;
+  amountIn: string;
+  amountOut: string;
+  feeCollected: string;
+}
+
+// ============ CLIENTS ============
+
 const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_KEY!
@@ -53,7 +87,7 @@ const publicClient = createPublicClient({
   transport: http(),
 });
 
-const backendAccount = privateKeyToAccount(process.env.BACKEND_PRIVATE_KEY as `0x${string}`);
+const backendAccount = privateKeyToAccount(process.env.BACKEND_PRIVATE_KEY as Hex);
 
 const walletClient = createWalletClient({
   account: backendAccount,
@@ -61,9 +95,39 @@ const walletClient = createWalletClient({
   transport: http(),
 });
 
-/**
- * Fetch current Fear & Greed Index
- */
+// ============ DELEGATION MANAGER ABI ============
+
+const delegationManagerAbi = [
+  {
+    name: 'redeemDelegations',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'delegations', type: 'bytes[][]' },
+      { name: 'modes', type: 'uint8[]' },
+      { name: 'executions', type: 'bytes[][]' },
+    ],
+    outputs: [],
+  },
+] as const;
+
+// ============ EMBER STAKING ABI ============
+
+const emberStakingAbi = [
+  {
+    name: 'depositRewards',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [],
+  },
+] as const;
+
+// ============ FEAR & GREED ============
+
 async function fetchFearGreed(): Promise<{ value: number; classification: string }> {
   const response = await fetch('https://api.alternative.me/fng/');
   const data = await response.json();
@@ -73,9 +137,6 @@ async function fetchFearGreed(): Promise<{ value: number; classification: string
   };
 }
 
-/**
- * Calculate DCA decision based on F&G value
- */
 function calculateDecision(fgValue: number): DCADecision {
   if (fgValue <= FG_THRESHOLDS.EXTREME_FEAR_MAX) {
     return { action: 'buy', percentage: 5, reason: 'Extreme Fear - Buy 5%' };
@@ -92,56 +153,42 @@ function calculateDecision(fgValue: number): DCADecision {
   return { action: 'sell', percentage: 5, reason: 'Extreme Greed - Sell 5%' };
 }
 
-/**
- * Get active delegations from Supabase
- */
-async function getActiveDelegations(): Promise<DelegationRecord[]> {
-  const { data, error } = await supabase
-    .from('delegations')
-    .select('*')
-    .eq('status', 'active')
-    .gt('expires_at', new Date().toISOString());
+// ============ BALANCE FETCHING ============
 
-  if (error) throw error;
-  return data || [];
+async function getETHBalance(address: Address): Promise<bigint> {
+  return publicClient.getBalance({ address });
 }
 
-/**
- * Execute swap via Uniswap Trading API
- */
-async function executeSwap(
-  smartAccountAddress: `0x${string}`,
-  direction: 'buy' | 'sell',
+async function getUSDCBalance(address: Address): Promise<bigint> {
+  const balance = await publicClient.readContract({
+    address: ADDRESSES.USDC,
+    abi: erc20Abi,
+    functionName: 'balanceOf',
+    args: [address],
+  });
+  return balance;
+}
+
+// ============ FEE CALCULATION ============
+
+function calculateFee(amount: bigint): bigint {
+  return (amount * BigInt(FEE_BPS)) / BigInt(BPS_DENOMINATOR);
+}
+
+function calculateAmountAfterFee(amount: bigint): bigint {
+  return amount - calculateFee(amount);
+}
+
+// ============ SWAP EXECUTION ============
+
+async function getSwapQuote(
+  swapper: Address,
+  tokenIn: Address,
+  tokenOut: Address,
   amount: string
-): Promise<string | null> {
-  const tokenIn = direction === 'buy' ? TOKENS.USDC : TOKENS.ETH;
-  const tokenOut = direction === 'buy' ? TOKENS.ETH : TOKENS.USDC;
-
+): Promise<{ quote: any; swap: any } | null> {
   try {
-    // 1. Check approval
-    if (tokenIn !== TOKENS.ETH) {
-      const approvalRes = await fetch(`${TRADING_API}/check_approval`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': process.env.UNISWAP_API_KEY!,
-        },
-        body: JSON.stringify({
-          walletAddress: smartAccountAddress,
-          token: tokenIn,
-          amount,
-          chainId: CHAIN_ID,
-        }),
-      });
-      const approvalData = await approvalRes.json();
-      
-      if (approvalData.approval) {
-        // TODO: Execute approval via delegation
-        console.log(`[${smartAccountAddress}] Needs approval`);
-      }
-    }
-
-    // 2. Get quote
+    // Get quote
     const quoteRes = await fetch(`${TRADING_API}/quote`, {
       method: 'POST',
       headers: {
@@ -149,7 +196,7 @@ async function executeSwap(
         'x-api-key': process.env.UNISWAP_API_KEY!,
       },
       body: JSON.stringify({
-        swapper: smartAccountAddress,
+        swapper,
         tokenIn,
         tokenOut,
         tokenInChainId: CHAIN_ID,
@@ -159,13 +206,16 @@ async function executeSwap(
         slippageTolerance: 1,
       }),
     });
-    const quoteData = await quoteRes.json();
 
     if (!quoteRes.ok) {
-      throw new Error(quoteData.detail || 'Quote failed');
+      const error = await quoteRes.json();
+      console.error('Quote failed:', error);
+      return null;
     }
 
-    // 3. Get swap transaction
+    const quoteData = await quoteRes.json();
+
+    // Get swap transaction
     const { permitData, permitTransaction, ...cleanQuote } = quoteData;
     const swapRes = await fetch(`${TRADING_API}/swap`, {
       method: 'POST',
@@ -175,86 +225,361 @@ async function executeSwap(
       },
       body: JSON.stringify(cleanQuote),
     });
-    const swapData = await swapRes.json();
 
-    if (!swapRes.ok || !swapData.swap?.data) {
-      throw new Error(swapData.detail || 'Swap failed');
+    if (!swapRes.ok) {
+      const error = await swapRes.json();
+      console.error('Swap request failed:', error);
+      return null;
     }
 
-    // 4. Execute via delegation (TODO: implement delegation execution)
-    console.log(`[${smartAccountAddress}] Would execute swap:`, swapData.swap);
-    
-    // For now, return null - actual execution needs delegation framework
-    return null;
+    const swapData = await swapRes.json();
+    return { quote: quoteData, swap: swapData.swap };
   } catch (error) {
-    console.error(`[${smartAccountAddress}] Swap error:`, error);
+    console.error('Swap quote error:', error);
     return null;
   }
 }
 
-/**
- * Log execution to Supabase
- */
-async function logExecution(
-  delegationId: string,
-  fgValue: number,
-  decision: DCADecision,
-  txHash: string | null
-) {
-  await supabase.from('executions').insert({
-    delegation_id: delegationId,
-    fg_value: fgValue,
-    action: decision.action,
-    percentage: decision.percentage,
-    tx_hash: txHash,
-    status: txHash ? 'success' : 'skipped',
-    executed_at: new Date().toISOString(),
-  });
+// ============ DELEGATION EXECUTION ============
+
+async function executeDelegatedSwap(
+  delegation: DelegationRecord,
+  direction: 'buy' | 'sell',
+  swapTo: Address,
+  swapData: Hex,
+  swapValue: bigint
+): Promise<string | null> {
+  try {
+    // Parse the stored delegation data
+    const delegationData = JSON.parse(delegation.delegation_data);
+    
+    // Encode the execution for the swap
+    // The execution is: call the Uniswap router with the swap data
+    const execution = {
+      target: swapTo,
+      value: swapValue,
+      callData: swapData,
+    };
+
+    // Encode execution as bytes
+    const executionEncoded = encodeFunctionData({
+      abi: [{
+        name: 'execute',
+        type: 'function',
+        inputs: [
+          { name: 'target', type: 'address' },
+          { name: 'value', type: 'uint256' },
+          { name: 'callData', type: 'bytes' },
+        ],
+        outputs: [],
+      }],
+      functionName: 'execute',
+      args: [execution.target, execution.value, execution.callData],
+    });
+
+    // For now, we'll use a simplified approach:
+    // The backend calls the DelegationManager.redeemDelegations
+    // This requires the delegation to be properly formatted
+    
+    // Build the redeemDelegations call
+    const redeemTx = await walletClient.sendTransaction({
+      to: ADDRESSES.DELEGATION_MANAGER,
+      data: encodeFunctionData({
+        abi: delegationManagerAbi,
+        functionName: 'redeemDelegations',
+        args: [
+          [[delegationData.encoded]], // delegations (nested array)
+          [0], // modes (0 = SingleDefault)
+          [[executionEncoded]], // executions (nested array)
+        ],
+      }),
+      gas: 500000n,
+    });
+
+    // Wait for confirmation
+    const receipt = await publicClient.waitForTransactionReceipt({ 
+      hash: redeemTx,
+      timeout: 60000,
+    });
+
+    if (receipt.status === 'success') {
+      return redeemTx;
+    } else {
+      console.error('Transaction reverted');
+      return null;
+    }
+  } catch (error) {
+    console.error('Delegation execution error:', error);
+    return null;
+  }
 }
 
-/**
- * Main execution loop
- */
+// ============ FEE COLLECTION ============
+
+async function collectFee(tokenAddress: Address, amount: bigint): Promise<string | null> {
+  if (amount === 0n) return null;
+
+  try {
+    // First approve the staking contract to spend the fee
+    const approveTx = await walletClient.writeContract({
+      address: tokenAddress,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [ADDRESSES.EMBER_STAKING, amount],
+    });
+    
+    await publicClient.waitForTransactionReceipt({ hash: approveTx });
+
+    // Then deposit the fee as rewards
+    const depositTx = await walletClient.writeContract({
+      address: ADDRESSES.EMBER_STAKING,
+      abi: emberStakingAbi,
+      functionName: 'depositRewards',
+      args: [tokenAddress, amount],
+    });
+
+    await publicClient.waitForTransactionReceipt({ hash: depositTx });
+    
+    console.log(`Fee collected: ${formatUnits(amount, tokenAddress === ADDRESSES.USDC ? 6 : 18)} ${tokenAddress === ADDRESSES.USDC ? 'USDC' : 'WETH'}`);
+    return depositTx;
+  } catch (error) {
+    console.error('Fee collection error:', error);
+    return null;
+  }
+}
+
+// ============ DATABASE ============
+
+async function getActiveDelegations(): Promise<DelegationRecord[]> {
+  const { data, error } = await supabase
+    .from('delegations')
+    .select('*')
+    .gt('expires_at', new Date().toISOString());
+
+  if (error) {
+    console.error('Database error:', error);
+    return [];
+  }
+  return data || [];
+}
+
+async function logExecution(
+  delegationId: string,
+  userAddress: string,
+  fgValue: number,
+  decision: DCADecision,
+  result: ExecutionResult
+) {
+  const { error } = await supabase.from('dca_executions').insert({
+    delegation_id: delegationId,
+    user_address: userAddress,
+    fear_greed_index: fgValue,
+    action: decision.action,
+    amount_in: result.amountIn,
+    amount_out: result.amountOut,
+    fee_collected: result.feeCollected,
+    tx_hash: result.txHash,
+    status: result.success ? 'success' : 'failed',
+    error_message: result.error,
+    created_at: new Date().toISOString(),
+  });
+
+  if (error) {
+    console.error('Failed to log execution:', error);
+  }
+}
+
+async function updateProtocolStats(volume: bigint, fees: bigint) {
+  // Update protocol-wide stats
+  const { error } = await supabase.rpc('increment_protocol_stats', {
+    volume_delta: volume.toString(),
+    fees_delta: fees.toString(),
+  });
+
+  if (error) {
+    console.error('Failed to update stats:', error);
+  }
+}
+
+// ============ MAIN EXECUTION ============
+
+async function processUserDCA(
+  delegation: DelegationRecord,
+  decision: DCADecision,
+  fgValue: number
+): Promise<ExecutionResult> {
+  const userAddress = delegation.user_address as Address;
+  
+  console.log(`\n--- Processing: ${userAddress} ---`);
+
+  // Determine swap direction and get balance
+  const isBuy = decision.action === 'buy';
+  const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH;
+  const tokenOut = isBuy ? ADDRESSES.WETH : ADDRESSES.USDC;
+  
+  // Get balance
+  const balance = isBuy 
+    ? await getUSDCBalance(userAddress)
+    : await getETHBalance(userAddress);
+
+  if (balance === 0n) {
+    console.log(`No ${isBuy ? 'USDC' : 'ETH'} balance, skipping`);
+    return {
+      success: false,
+      txHash: null,
+      error: 'Insufficient balance',
+      amountIn: '0',
+      amountOut: '0',
+      feeCollected: '0',
+    };
+  }
+
+  // Calculate swap amount (percentage of balance)
+  const percentage = BigInt(Math.floor(decision.percentage * 100));
+  let swapAmount = (balance * percentage) / 10000n;
+
+  // Apply max amount limit from delegation
+  const maxAmount = BigInt(delegation.max_amount_per_swap);
+  if (swapAmount > maxAmount) {
+    swapAmount = maxAmount;
+    console.log(`Capped to max amount: ${formatUnits(maxAmount, isBuy ? 6 : 18)}`);
+  }
+
+  // Calculate fee (taken from input)
+  const fee = calculateFee(swapAmount);
+  const swapAmountAfterFee = swapAmount - fee;
+
+  console.log(`Swap: ${formatUnits(swapAmountAfterFee, isBuy ? 6 : 18)} ${isBuy ? 'USDC' : 'ETH'} -> ${isBuy ? 'ETH' : 'USDC'}`);
+  console.log(`Fee: ${formatUnits(fee, isBuy ? 6 : 18)} ${isBuy ? 'USDC' : 'ETH'}`);
+
+  // Get swap quote
+  const swapQuote = await getSwapQuote(
+    userAddress,
+    tokenIn,
+    tokenOut,
+    swapAmountAfterFee.toString()
+  );
+
+  if (!swapQuote) {
+    return {
+      success: false,
+      txHash: null,
+      error: 'Failed to get swap quote',
+      amountIn: swapAmountAfterFee.toString(),
+      amountOut: '0',
+      feeCollected: '0',
+    };
+  }
+
+  // Execute the delegated swap
+  const txHash = await executeDelegatedSwap(
+    delegation,
+    decision.action as 'buy' | 'sell',
+    swapQuote.swap.to as Address,
+    swapQuote.swap.data as Hex,
+    BigInt(swapQuote.swap.value || '0')
+  );
+
+  if (!txHash) {
+    return {
+      success: false,
+      txHash: null,
+      error: 'Swap execution failed',
+      amountIn: swapAmountAfterFee.toString(),
+      amountOut: swapQuote.quote.quote.output.amount,
+      feeCollected: '0',
+    };
+  }
+
+  // Collect fee
+  await collectFee(tokenIn, fee);
+
+  return {
+    success: true,
+    txHash,
+    error: null,
+    amountIn: swapAmountAfterFee.toString(),
+    amountOut: swapQuote.quote.quote.output.amount,
+    feeCollected: fee.toString(),
+  };
+}
+
 async function runDCA() {
-  console.log('=== DCA Executor Starting ===');
+  console.log('========================================');
+  console.log('  Fear & Greed DCA Executor');
+  console.log('========================================');
   console.log(`Time: ${new Date().toISOString()}`);
+  console.log(`Backend: ${backendAccount.address}`);
+
+  // Check backend has gas
+  const backendBalance = await getETHBalance(backendAccount.address);
+  console.log(`Backend ETH: ${formatUnits(backendBalance, 18)}`);
+  
+  if (backendBalance < parseUnits('0.001', 18)) {
+    console.error('Backend wallet needs more ETH for gas!');
+    return;
+  }
 
   // 1. Fetch Fear & Greed
   const fg = await fetchFearGreed();
-  console.log(`Fear & Greed: ${fg.value} (${fg.classification})`);
+  console.log(`\nFear & Greed: ${fg.value} (${fg.classification})`);
 
   // 2. Calculate decision
   const decision = calculateDecision(fg.value);
   console.log(`Decision: ${decision.reason}`);
 
   if (decision.action === 'hold') {
-    console.log('No action needed. Exiting.');
+    console.log('\n✓ Market neutral - No action needed');
     return;
   }
 
   // 3. Get active delegations
   const delegations = await getActiveDelegations();
-  console.log(`Active delegations: ${delegations.length}`);
+  console.log(`\nActive delegations: ${delegations.length}`);
 
-  // 4. Execute for each delegation
-  for (const delegation of delegations) {
-    console.log(`\nProcessing: ${delegation.smart_account_address}`);
-    
-    // Calculate amount based on percentage
-    // TODO: Fetch actual balance and calculate
-    const amount = '1000000'; // Placeholder 1 USDC
-    
-    const txHash = await executeSwap(
-      delegation.smart_account_address as `0x${string}`,
-      decision.action,
-      amount
-    );
-
-    await logExecution(delegation.id, fg.value, decision, txHash);
+  if (delegations.length === 0) {
+    console.log('No active delegations to process');
+    return;
   }
 
-  console.log('\n=== DCA Executor Complete ===');
+  // 4. Process each delegation
+  let totalVolume = 0n;
+  let totalFees = 0n;
+  let successCount = 0;
+
+  for (const delegation of delegations) {
+    const result = await processUserDCA(delegation, decision, fg.value);
+    
+    // Log to database
+    await logExecution(delegation.id, delegation.user_address, fg.value, decision, result);
+
+    if (result.success) {
+      successCount++;
+      totalVolume += BigInt(result.amountIn);
+      totalFees += BigInt(result.feeCollected);
+    }
+  }
+
+  // 5. Update protocol stats
+  if (totalVolume > 0n) {
+    await updateProtocolStats(totalVolume, totalFees);
+  }
+
+  // 6. Summary
+  console.log('\n========================================');
+  console.log('  Execution Summary');
+  console.log('========================================');
+  console.log(`Processed: ${delegations.length} delegations`);
+  console.log(`Successful: ${successCount}`);
+  console.log(`Total Volume: ${formatUnits(totalVolume, 6)} (base units)`);
+  console.log(`Total Fees: ${formatUnits(totalFees, 6)} (base units)`);
+  console.log('========================================\n');
 }
 
 // Run
-runDCA().catch(console.error);
+runDCA()
+  .then(() => process.exit(0))
+  .catch((error) => {
+    console.error('Fatal error:', error);
+    process.exit(1);
+  });
