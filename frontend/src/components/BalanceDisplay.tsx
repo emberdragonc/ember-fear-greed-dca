@@ -70,9 +70,16 @@ export function BalanceDisplay() {
   const isLoading = ethLoading || usdcLoading;
   const isPending = isSendingEth || isSendingUsdc;
 
-  // Format for display
+  // Raw balances for max button (full precision)
+  const ethRaw = ethBalance ? formatUnits(ethBalance.value, 18) : '0';
+  const usdcRaw = usdcBalanceRaw ? formatUnits(usdcBalanceRaw as bigint, 6) : '0';
+  
+  // Format for display (rounded)
   const ethFormatted = ethBalance ? parseFloat(formatUnits(ethBalance.value, 18)).toFixed(4) : '0';
   const usdcFormatted = usdcBalanceRaw ? parseFloat(formatUnits(usdcBalanceRaw as bigint, 6)).toFixed(2) : '0';
+  
+  // Check if user has enough ETH for gas (~0.0001 ETH minimum for user op)
+  const hasGasForWithdraw = ethBalance && ethBalance.value > BigInt(100000000000000); // 0.0001 ETH
 
   const handleDeposit = async () => {
     if (!smartAccountAddress || !depositAmount) return;
@@ -243,15 +250,20 @@ export function BalanceDisplay() {
           </div>
           <div className="flex gap-2 mb-2">
             <button
-              onClick={() => setWithdrawAmount(withdrawToken === 'USDC' ? usdcFormatted : ethFormatted)}
+              onClick={() => setWithdrawAmount(withdrawToken === 'USDC' ? usdcRaw : ethRaw)}
               className="text-xs text-orange-400 hover:text-orange-300"
             >
               Max
             </button>
           </div>
+          {!hasGasForWithdraw && (
+            <p className="text-xs text-yellow-400 mb-2">
+              ⚠️ Need ~0.0001 ETH in smart wallet for withdrawal gas
+            </p>
+          )}
           <button
             onClick={handleWithdraw}
-            disabled={isWithdrawing || !withdrawAmount}
+            disabled={isWithdrawing || !withdrawAmount || !hasGasForWithdraw}
             className="w-full px-3 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors"
           >
             {isWithdrawing ? 'Processing...' : `Withdraw ${withdrawToken}`}
