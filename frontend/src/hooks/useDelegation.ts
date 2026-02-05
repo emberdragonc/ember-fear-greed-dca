@@ -52,30 +52,66 @@ export function useDelegation(): UseDelegationReturn {
     delegation: null,
   });
 
-  // Load existing delegation on mount
+  // Load existing delegation on mount (check localStorage + DB)
   useEffect(() => {
     if (!isConnected || !address) {
       setState({ status: 'idle', error: null, delegation: null });
       return;
     }
 
-    const stored = loadDelegation();
-    if (stored && stored.delegator.toLowerCase() === address.toLowerCase()) {
-      // Check if expired
-      if (isDelegationExpired(stored.caveats.expiry)) {
-        setState({
-          status: 'idle',
-          error: 'Previous delegation expired',
-          delegation: { ...stored, status: 'expired' },
-        });
-      } else {
-        setState({
-          status: stored.signature ? 'signed' : 'created',
-          error: null,
-          delegation: stored,
-        });
+    const checkDelegation = async () => {
+      // First check localStorage
+      const stored = loadDelegation();
+      if (stored && stored.delegator.toLowerCase() === address.toLowerCase()) {
+        // Check if expired
+        if (isDelegationExpired(stored.caveats.expiry)) {
+          setState({
+            status: 'idle',
+            error: 'Previous delegation expired',
+            delegation: { ...stored, status: 'expired' },
+          });
+        } else {
+          setState({
+            status: stored.signature ? 'signed' : 'created',
+            error: null,
+            delegation: stored,
+          });
+        }
+        return;
       }
-    }
+
+      // If not in localStorage, check database
+      try {
+        const response = await fetch(`/api/delegation?userAddress=${address}`);
+        const result = await response.json();
+        if (result.exists) {
+          // Delegation exists in DB - mark as signed
+          setState({
+            status: 'signed',
+            error: null,
+            delegation: {
+              delegate: BACKEND_SIGNER,
+              delegator: address,
+              delegationHash: '',
+              signature: 'stored-in-db',
+              status: 'signed',
+              expiresAt: result.expiresAt,
+              caveats: {
+                maxCalls: DELEGATION_CONFIG.MAX_CALLS_PER_DAY,
+                maxSwapAmount: DELEGATION_CONFIG.MAX_SWAP_AMOUNT_USDC,
+                expiry: BigInt(new Date(result.expiresAt).getTime()),
+              },
+              basePercentage: 2.5,
+              targetAsset: 'ETH',
+            },
+          });
+        }
+      } catch (err) {
+        console.error('Failed to check delegation in DB:', err);
+      }
+    };
+
+    checkDelegation();
   }, [address, isConnected]);
 
   // Save delegation to Supabase via API (server-side with service key)
