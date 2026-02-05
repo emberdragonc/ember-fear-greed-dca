@@ -62,7 +62,7 @@ export default function FearGreedGauge() {
       {/* Gauge */}
       <div className="relative flex flex-col items-center">
         {/* Semi-circle gauge */}
-        <svg viewBox="0 0 200 120" className="w-full max-w-[240px]">
+        <svg viewBox="0 0 200 140" className="w-full max-w-[240px]">
           {/* Background arc */}
           <defs>
             <linearGradient id="gaugeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -108,25 +108,32 @@ export default function FearGreedGauge() {
             <circle cx="100" cy="100" r="8" fill={colors.main} />
             <circle cx="100" cy="100" r="4" fill="#0a0b0d" />
           </g>
-        </svg>
-
-        {/* Value display - positioned above the needle center */}
-        <div 
-          className="absolute text-center"
-          style={{ bottom: '45px' }}
-        >
-          <div 
-            className="text-4xl font-bold"
-            style={{ color: colors.main, textShadow: `0 0 20px ${colors.glow}` }}
+          
+          {/* Value - positioned above center circle */}
+          <text 
+            x="100" 
+            y="85" 
+            textAnchor="middle" 
+            fill={colors.main}
+            fontSize="32"
+            fontWeight="bold"
+            style={{ textShadow: `0 0 20px ${colors.glow}` }}
           >
             {value}
-          </div>
-        </div>
-        
-        {/* Classification - positioned below the gauge */}
-        <div className="text-sm text-gray-400 capitalize mt-2 text-center">
-          {classification}
-        </div>
+          </text>
+          
+          {/* Classification - positioned below center circle */}
+          <text 
+            x="100" 
+            y="125" 
+            textAnchor="middle" 
+            fill="#9ca3af"
+            fontSize="14"
+            className="capitalize"
+          >
+            {classification}
+          </text>
+        </svg>
       </div>
 
       {/* Action indicator */}
