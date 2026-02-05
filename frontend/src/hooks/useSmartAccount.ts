@@ -76,7 +76,7 @@ export function useSmartAccount() {
     try {
       // Create smart account with Hybrid implementation (EOA + passkey support)
       const smartAccount = await toMetaMaskSmartAccount({
-        client: publicClient,
+        client: publicClient as any,
         implementation: Implementation.Hybrid,
         deployParams: [eoaAddress, [], [], []],
         deploySalt: '0x',
@@ -125,7 +125,7 @@ export function useSmartAccount() {
     try {
       // Recreate the smart account (address will be deterministic)
       const smartAccount = await toMetaMaskSmartAccount({
-        client: publicClient,
+        client: publicClient as any,
         implementation: Implementation.Hybrid,
         deployParams: [eoaAddress, [], [], []],
         deploySalt: '0x',

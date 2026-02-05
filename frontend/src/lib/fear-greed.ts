@@ -40,7 +40,7 @@ export async function fetchFearGreed(): Promise<FearGreedData> {
 
   const data: FearGreedResponse = await response.json();
 
-  if (!data.data || data.data.length === 0) {
+  if (!data.data || data.data.length < 1) {
     throw new Error("Invalid response from Fear & Greed API");
   }
 
