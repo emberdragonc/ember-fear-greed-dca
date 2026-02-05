@@ -1,0 +1,37 @@
+name: Daily DCA Executor
+
+on:
+  schedule:
+    # Run daily at 12:00 UTC (when most of the world is awake)
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+    # Allow manual triggers for testing
+
+jobs:
+  execute-dca:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm install
+
+      - name: Run DCA Executor
+        working-directory: backend
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          BACKEND_PRIVATE_KEY: ${{ secrets.BACKEND_PRIVATE_KEY }}
+          UNISWAP_API_KEY: ${{ secrets.UNISWAP_API_KEY }}
+        run: npx tsx dca-executor.ts
+
+      - name: Log completion
+        run: echo "DCA execution completed at $(date -u)"

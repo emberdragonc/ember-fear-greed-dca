@@ -1,160 +1,137 @@
-"use client";
+// FearGreedGauge.tsx - Visual gauge for Fear & Greed Index
+'use client';
 
-import { useEffect, useState } from "react";
-import {
-  fetchFearGreed,
-  FearGreedData,
-  getFGColorHex,
-  getGaugePercentage,
-} from "@/lib/fear-greed";
+import { useFearGreed } from '@/hooks/useFearGreed';
 
-interface FearGreedGaugeProps {
-  value?: number;
-  showLabel?: boolean;
-  size?: 'sm' | 'md' | 'lg';
-}
+export default function FearGreedGauge() {
+  const { data, isLoading, error } = useFearGreed();
 
-export default function FearGreedGauge({ value: externalValue, showLabel = true, size = 'md' }: FearGreedGaugeProps) {
-  const [data, setData] = useState<FearGreedData | null>(null);
-  const [loading, setLoading] = useState(externalValue === undefined);
-  const [error, setError] = useState<string | null>(null);
+  if (isLoading) {
+    return (
+      <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">
+        <div className="flex items-center justify-center h-48">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
+        </div>
+      </div>
+    );
+  }
 
-  // Use external value if provided, otherwise fetch
-  const displayValue = externalValue ?? data?.value ?? 50;
-  const displayLabel = data?.classification ?? getClassification(displayValue);
+  if (error || !data) {
+    return (
+      <div className="p-6 bg-white/5 rounded-2xl border border-red-500/20 backdrop-blur-sm">
+        <p className="text-red-400 text-center">Failed to load Fear & Greed data</p>
+      </div>
+    );
+  }
 
-  useEffect(() => {
-    // If external value is provided, skip fetching
-    if (externalValue !== undefined) {
-      setLoading(false);
-      return;
-    }
+  const value = data.value;
+  const classification = data.value_classification;
+  
+  // Calculate needle rotation (-90 to 90 degrees)
+  const rotation = (value / 100) * 180 - 90;
 
-    const loadData = async () => {
-      try {
-        const fg = await fetchFearGreed();
-        setData(fg);
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load data");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadData();
-
-    // Refresh every 5 minutes
-    const interval = setInterval(loadData, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [externalValue]);
-
-  const sizeClasses = {
-    sm: 'w-32 h-16',
-    md: 'w-48 h-24',
-    lg: 'w-64 h-32',
+  // Get color based on value
+  const getColor = (val: number) => {
+    if (val <= 25) return { main: '#ef4444', glow: 'rgba(239,68,68,0.3)' };
+    if (val <= 45) return { main: '#f97316', glow: 'rgba(249,115,22,0.3)' };
+    if (val <= 54) return { main: '#6b7280', glow: 'rgba(107,114,128,0.3)' };
+    if (val <= 75) return { main: '#84cc16', glow: 'rgba(132,204,22,0.3)' };
+    return { main: '#22c55e', glow: 'rgba(34,197,94,0.3)' };
   };
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center p-8 rounded-2xl bg-zinc-100 dark:bg-zinc-900">
-        <div className="w-16 h-16 border-4 border-zinc-300 dark:border-zinc-700 border-t-orange-500 rounded-full animate-spin" />
-        <p className="mt-4 text-zinc-500 dark:text-zinc-400">
-          Loading Fear &amp; Greed Index...
-        </p>
-      </div>
-    );
-  }
+  const colors = getColor(value);
 
-  if (error && externalValue === undefined) {
-    return (
-      <div className="flex flex-col items-center justify-center p-8 rounded-2xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
-        <p className="text-red-600 dark:text-red-400">{error}</p>
-      </div>
-    );
-  }
+  // Get action text
+  const getAction = (val: number) => {
+    if (val <= 25) return { text: 'BUY 5%', color: 'text-emerald-400' };
+    if (val <= 45) return { text: 'BUY 2.5%', color: 'text-emerald-400' };
+    if (val <= 54) return { text: 'HOLD', color: 'text-gray-400' };
+    if (val <= 75) return { text: 'SELL 2.5%', color: 'text-red-400' };
+    return { text: 'SELL 5%', color: 'text-red-400' };
+  };
 
-  const percentage = getGaugePercentage(displayValue);
-  const color = getFGColorHex(displayValue);
+  const action = getAction(value);
 
   return (
-    <div className="flex flex-col items-center">
-      {/* Gauge SVG */}
-      <svg viewBox="0 0 200 110" className={sizeClasses[size]}>
-        {/* Background arc */}
-        <path
-          d="M 20 100 A 80 80 0 0 1 180 100"
-          fill="none"
-          stroke="#e5e7eb"
-          strokeWidth="20"
-          strokeLinecap="round"
-          className="dark:stroke-zinc-700"
-        />
-        
-        {/* Gradient arc */}
-        <defs>
-          <linearGradient id="gaugeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#ea3943" />
-            <stop offset="25%" stopColor="#f7931a" />
-            <stop offset="50%" stopColor="#999999" />
-            <stop offset="75%" stopColor="#93c47d" />
-            <stop offset="100%" stopColor="#16c784" />
-          </linearGradient>
-        </defs>
-        
-        <path
-          d="M 20 100 A 80 80 0 0 1 180 100"
-          fill="none"
-          stroke="url(#gaugeGradient)"
-          strokeWidth="20"
-          strokeLinecap="round"
-          opacity="0.3"
-        />
-        
-        {/* Needle */}
-        <g transform={`rotate(${-90 + (percentage * 1.8)}, 100, 100)`}>
-          <line
-            x1="100"
-            y1="100"
-            x2="100"
-            y2="35"
-            stroke={color}
-            strokeWidth="3"
-            strokeLinecap="round"
-          />
-          <circle cx="100" cy="100" r="8" fill={color} />
-        </g>
-        
-        {/* Value display */}
-        <text
-          x="100"
-          y="95"
-          textAnchor="middle"
-          className="fill-zinc-900 dark:fill-white text-2xl font-bold"
-          fontSize="24"
-        >
-          {displayValue}
-        </text>
-      </svg>
+    <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-sm font-medium text-gray-400">Fear & Greed Index</h3>
+        <span className="text-xs text-gray-500">Updated daily</span>
+      </div>
       
-      {/* Label */}
-      {showLabel && (
-        <p
-          className="mt-2 text-lg font-semibold"
-          style={{ color }}
-        >
-          {displayLabel}
-        </p>
-      )}
+      {/* Gauge */}
+      <div className="relative flex flex-col items-center">
+        {/* Semi-circle gauge */}
+        <svg viewBox="0 0 200 120" className="w-full max-w-[240px]">
+          {/* Background arc */}
+          <defs>
+            <linearGradient id="gaugeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#ef4444" />
+              <stop offset="25%" stopColor="#f97316" />
+              <stop offset="50%" stopColor="#6b7280" />
+              <stop offset="75%" stopColor="#84cc16" />
+              <stop offset="100%" stopColor="#22c55e" />
+            </linearGradient>
+          </defs>
+          
+          {/* Outer arc (gauge track) */}
+          <path
+            d="M 20 100 A 80 80 0 0 1 180 100"
+            fill="none"
+            stroke="url(#gaugeGradient)"
+            strokeWidth="12"
+            strokeLinecap="round"
+            opacity="0.3"
+          />
+          
+          {/* Progress arc */}
+          <path
+            d="M 20 100 A 80 80 0 0 1 180 100"
+            fill="none"
+            stroke="url(#gaugeGradient)"
+            strokeWidth="12"
+            strokeLinecap="round"
+            strokeDasharray={`${(value / 100) * 251.2} 251.2`}
+          />
+          
+          {/* Needle */}
+          <g transform={`rotate(${rotation}, 100, 100)`}>
+            <line
+              x1="100"
+              y1="100"
+              x2="100"
+              y2="35"
+              stroke={colors.main}
+              strokeWidth="3"
+              strokeLinecap="round"
+            />
+            <circle cx="100" cy="100" r="8" fill={colors.main} />
+            <circle cx="100" cy="100" r="4" fill="#0a0b0d" />
+          </g>
+        </svg>
+
+        {/* Value display */}
+        <div className="absolute bottom-0 text-center">
+          <div 
+            className="text-4xl font-bold"
+            style={{ color: colors.main, textShadow: `0 0 20px ${colors.glow}` }}
+          >
+            {value}
+          </div>
+          <div className="text-sm text-gray-400 capitalize mt-1">{classification}</div>
+        </div>
+      </div>
+
+      {/* Action indicator */}
+      <div className="mt-6 p-3 rounded-xl bg-white/5 border border-white/10 text-center">
+        <p className="text-xs text-gray-500 mb-1">Current Signal</p>
+        <p className={`text-lg font-bold ${action.color}`}>{action.text}</p>
+      </div>
+
+      {/* Attribution */}
+      <p className="mt-4 text-[10px] text-gray-600 text-center">
+        Data: <a href="https://alternative.me/crypto/fear-and-greed-index/" target="_blank" rel="noopener noreferrer" className="hover:text-gray-400">Alternative.me</a>
+      </p>
     </div>
   );
-}
-
-// Helper to get classification from value when no API data
-function getClassification(value: number): string {
-  if (value <= 25) return 'Extreme Fear';
-  if (value <= 45) return 'Fear';
-  if (value <= 54) return 'Neutral';
-  if (value <= 75) return 'Greed';
-  return 'Extreme Greed';
 }

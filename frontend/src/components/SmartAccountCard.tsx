@@ -21,10 +21,10 @@ export function SmartAccountCard() {
 
   if (state.status === 'loading') {
     return (
-      <div className="p-6 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
+      <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">
         <div className="flex items-center justify-center h-24">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-          <span className="ml-3 text-gray-600 dark:text-gray-300">Setting up Smart Account...</span>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
+          <span className="ml-3 text-gray-400">Setting up Smart Account...</span>
         </div>
       </div>
     );
@@ -32,12 +32,12 @@ export function SmartAccountCard() {
 
   if (state.status === 'error') {
     return (
-      <div className="p-6 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-red-200 dark:border-red-800">
+      <div className="p-6 bg-red-500/10 rounded-2xl border border-red-500/20 backdrop-blur-sm">
         <div className="text-center">
-          <p className="text-red-600 dark:text-red-400 mb-3">{state.error}</p>
+          <p className="text-red-400 mb-3">{state.error}</p>
           <button
             onClick={createSmartAccount}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            className="px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors"
           >
             Try Again
           </button>
@@ -53,34 +53,34 @@ export function SmartAccountCard() {
       : `https://sepolia.basescan.org/address/${smartAccountAddress}`;
 
     return (
-      <div className="p-6 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
+      <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+          <h3 className="text-lg font-semibold text-white">
             Smart Account
           </h3>
           <span className={`px-3 py-1 text-xs font-medium rounded-full ${
             isDeployed 
-              ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' 
-              : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300'
+              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
+              : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
           }`}>
-            {isDeployed ? 'Deployed' : 'Not Deployed'}
+            {isDeployed ? '● Deployed' : '○ Not Deployed'}
           </span>
         </div>
         
         <div className="space-y-3">
           <div>
-            <label className="text-sm text-gray-500 dark:text-gray-400">Address</label>
-            <div className="flex items-center gap-2 mt-1">
-              <code className="flex-1 p-2 bg-gray-100 dark:bg-gray-900 rounded-lg text-sm font-mono text-gray-800 dark:text-gray-200 break-all">
+            <label className="text-sm text-gray-500 mb-1 block">Address</label>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 p-3 bg-black/30 rounded-xl text-sm font-mono text-gray-300 break-all border border-white/5">
                 {smartAccountAddress}
               </code>
               <button
                 onClick={handleCopy}
-                className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
+                className="p-3 text-gray-400 hover:text-white hover:bg-white/10 rounded-xl transition-colors"
                 title="Copy address"
               >
                 {copied ? (
-                  <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                 ) : (
@@ -96,7 +96,7 @@ export function SmartAccountCard() {
             href={explorerUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+            className="inline-flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300 transition-colors"
           >
             View on Explorer
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -105,8 +105,8 @@ export function SmartAccountCard() {
           </a>
 
           {!isDeployed && (
-            <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-              <p className="text-sm text-blue-700 dark:text-blue-300">
+            <div className="mt-4 p-3 bg-blue-500/10 rounded-xl border border-blue-500/20">
+              <p className="text-sm text-blue-300">
                 Your smart account will be deployed on your first transaction. 
                 No extra setup needed!
               </p>
@@ -119,22 +119,22 @@ export function SmartAccountCard() {
 
   // Idle state - show create button
   return (
-    <div className="p-6 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
+    <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">
       <div className="text-center">
-        <div className="w-12 h-12 mx-auto mb-3 bg-blue-100 dark:bg-blue-900 rounded-full flex items-center justify-center">
-          <svg className="w-6 h-6 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div className="w-14 h-14 mx-auto mb-4 bg-gradient-to-br from-blue-500/20 to-purple-500/20 rounded-2xl flex items-center justify-center border border-blue-500/20">
+          <svg className="w-7 h-7 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
           </svg>
         </div>
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+        <h3 className="text-lg font-semibold text-white mb-2">
           Create Smart Account
         </h3>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+        <p className="text-sm text-gray-400 mb-5">
           Your smart account is an ERC-4337 wallet that holds your funds and executes DCA trades.
         </p>
         <button
           onClick={createSmartAccount}
-          className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+          className="w-full px-4 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-500 hover:to-indigo-500 transition-all font-medium shadow-lg shadow-blue-500/20"
         >
           Create Smart Account
         </button>

@@ -13,21 +13,27 @@ export default function Home() {
   const { isConnected } = useAccount();
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-black">
+    <div className="min-h-screen bg-[#0a0b0d]">
+      {/* Gradient Background */}
+      <div className="fixed inset-0 bg-gradient-to-br from-blue-950/30 via-transparent to-purple-950/20 pointer-events-none" />
+      <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none" />
+      
       {/* Testnet Warning */}
       <TestnetBanner />
       
       {/* Header */}
-      <header className="border-b border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm sticky top-0 z-50">
+      <header className="relative border-b border-white/5 bg-black/20 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="text-2xl">🐉</span>
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center shadow-lg shadow-orange-500/20">
+              <span className="text-xl">🐉</span>
+            </div>
             <div>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-white">
+              <h1 className="text-lg font-bold text-white">
                 Fear & Greed DCA
               </h1>
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                Autonomous sentiment-based accumulation
+              <p className="text-xs text-gray-500">
+                by Ember
               </p>
             </div>
           </div>
@@ -36,70 +42,94 @@ export default function Home() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-6xl mx-auto px-4 py-8">
+      <main className="relative max-w-6xl mx-auto px-4 py-8">
         {!isConnected ? (
           // Not connected state - Landing page
-          <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
-            <div className="text-6xl mb-6">📊</div>
-            <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">
-              Buy Fear, Sell Greed
-            </h2>
-            <p className="text-lg text-gray-600 dark:text-gray-400 max-w-md mb-8">
-              Automatically DCA based on market sentiment. Accumulate when others panic, 
-              take profits when others are euphoric.
-            </p>
+          <div className="flex flex-col items-center justify-center min-h-[70vh] text-center">
+            {/* Hero */}
+            <div className="mb-8">
+              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-sm mb-6">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+                </span>
+                Autonomous DCA on Base
+              </div>
+              <h2 className="text-4xl md:text-5xl font-bold text-white mb-4 leading-tight">
+                Buy the Fear.<br />
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-emerald-500">Sell the Greed.</span>
+              </h2>
+              <p className="text-lg text-gray-400 max-w-lg mx-auto">
+                Automated DCA based on the Crypto Fear & Greed Index. 
+                Accumulate when others panic, take profits when they're euphoric.
+              </p>
+            </div>
             
-            {/* Strategy cards */}
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-3 max-w-3xl mb-8">
-              <div className="p-4 bg-red-50 dark:bg-red-900/20 rounded-xl border border-red-200 dark:border-red-800">
-                <div className="text-2xl mb-2">😱</div>
-                <p className="text-sm font-medium text-gray-900 dark:text-white">0-25</p>
-                <p className="text-xs text-green-600 dark:text-green-400 font-medium">BUY 5%</p>
-              </div>
-              <div className="p-4 bg-orange-50 dark:bg-orange-900/20 rounded-xl border border-orange-200 dark:border-orange-800">
-                <div className="text-2xl mb-2">😰</div>
-                <p className="text-sm font-medium text-gray-900 dark:text-white">26-45</p>
-                <p className="text-xs text-green-600 dark:text-green-400 font-medium">BUY 2.5%</p>
-              </div>
-              <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-                <div className="text-2xl mb-2">😐</div>
-                <p className="text-sm font-medium text-gray-900 dark:text-white">46-54</p>
-                <p className="text-xs text-gray-500 font-medium">HOLD</p>
-              </div>
-              <div className="p-4 bg-lime-50 dark:bg-lime-900/20 rounded-xl border border-lime-200 dark:border-lime-800">
-                <div className="text-2xl mb-2">😊</div>
-                <p className="text-sm font-medium text-gray-900 dark:text-white">55-75</p>
-                <p className="text-xs text-red-600 dark:text-red-400 font-medium">SELL 2.5%</p>
-              </div>
-              <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-xl border border-green-200 dark:border-green-800">
-                <div className="text-2xl mb-2">🤑</div>
-                <p className="text-sm font-medium text-gray-900 dark:text-white">76-100</p>
-                <p className="text-xs text-red-600 dark:text-red-400 font-medium">SELL 5%</p>
-              </div>
+            {/* Strategy Cards */}
+            <div className="grid grid-cols-5 gap-2 md:gap-3 max-w-2xl mb-10 w-full">
+              {[
+                { range: '0-25', emoji: '😱', label: 'Extreme Fear', action: 'BUY 5%', color: 'red', actionColor: 'emerald' },
+                { range: '26-45', emoji: '😰', label: 'Fear', action: 'BUY 2.5%', color: 'orange', actionColor: 'emerald' },
+                { range: '46-54', emoji: '😐', label: 'Neutral', action: 'HOLD', color: 'gray', actionColor: 'gray' },
+                { range: '55-75', emoji: '😊', label: 'Greed', action: 'SELL 2.5%', color: 'lime', actionColor: 'red' },
+                { range: '76-100', emoji: '🤑', label: 'Extreme Greed', action: 'SELL 5%', color: 'green', actionColor: 'red' },
+              ].map((item, i) => (
+                <div 
+                  key={i} 
+                  className={`p-3 md:p-4 rounded-xl bg-${item.color}-500/10 border border-${item.color}-500/20 backdrop-blur-sm transition-all hover:scale-105 hover:border-${item.color}-500/40`}
+                  style={{
+                    background: `rgba(${item.color === 'red' ? '239,68,68' : item.color === 'orange' ? '249,115,22' : item.color === 'gray' ? '107,114,128' : item.color === 'lime' ? '132,204,22' : '34,197,94'}, 0.1)`,
+                    borderColor: `rgba(${item.color === 'red' ? '239,68,68' : item.color === 'orange' ? '249,115,22' : item.color === 'gray' ? '107,114,128' : item.color === 'lime' ? '132,204,22' : '34,197,94'}, 0.2)`,
+                  }}
+                >
+                  <div className="text-2xl mb-1">{item.emoji}</div>
+                  <p className="text-xs text-gray-400 mb-1 hidden md:block">{item.label}</p>
+                  <p className="text-sm font-semibold text-white">{item.range}</p>
+                  <p className={`text-xs font-bold mt-1 ${item.actionColor === 'emerald' ? 'text-emerald-400' : item.actionColor === 'red' ? 'text-red-400' : 'text-gray-500'}`}>
+                    {item.action}
+                  </p>
+                </div>
+              ))}
             </div>
 
             {/* Features */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-2xl mb-8">
-              <div className="p-4 bg-white dark:bg-gray-800 rounded-xl shadow-sm">
-                <div className="text-xl mb-2">🔐</div>
-                <p className="text-sm font-medium text-gray-900 dark:text-white">Smart Account</p>
-                <p className="text-xs text-gray-500">Non-custodial, you control</p>
-              </div>
-              <div className="p-4 bg-white dark:bg-gray-800 rounded-xl shadow-sm">
-                <div className="text-xl mb-2">⚡</div>
-                <p className="text-sm font-medium text-gray-900 dark:text-white">Automated</p>
-                <p className="text-xs text-gray-500">Executes while you sleep</p>
-              </div>
-              <div className="p-4 bg-white dark:bg-gray-800 rounded-xl shadow-sm">
-                <div className="text-xl mb-2">🐉</div>
-                <p className="text-sm font-medium text-gray-900 dark:text-white">0.15% Fee</p>
-                <p className="text-xs text-gray-500">100% to EMBER stakers</p>
-              </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-2xl mb-10 w-full">
+              {[
+                { icon: '🔐', title: 'Non-Custodial', desc: 'Your keys, your crypto. Always.' },
+                { icon: '⚡', title: 'Fully Automated', desc: 'Set it and forget it.' },
+                { icon: '🐉', title: '0.15% Fee', desc: '100% to EMBER stakers.' },
+              ].map((feature, i) => (
+                <div key={i} className="p-5 rounded-xl bg-white/5 border border-white/10 backdrop-blur-sm hover:bg-white/[0.07] hover:border-white/20 transition-all">
+                  <div className="text-2xl mb-3">{feature.icon}</div>
+                  <p className="font-semibold text-white mb-1">{feature.title}</p>
+                  <p className="text-sm text-gray-500">{feature.desc}</p>
+                </div>
+              ))}
             </div>
 
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              Connect your wallet to get started →
-            </p>
+            {/* CTA */}
+            <div className="flex flex-col items-center gap-4">
+              <WalletConnect />
+              <p className="text-sm text-gray-500">
+                Connect wallet to get started
+              </p>
+            </div>
+
+            {/* Backtest Results */}
+            <div className="mt-16 p-6 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-blue-500/10 border border-emerald-500/20 max-w-md">
+              <p className="text-xs text-emerald-400 font-medium mb-2">📊 1-Year Backtest (2024)</p>
+              <div className="flex items-baseline gap-3 mb-2">
+                <span className="text-3xl font-bold text-white">-28.6%</span>
+                <span className="text-sm text-gray-400">F&G DCA</span>
+              </div>
+              <div className="flex items-baseline gap-3">
+                <span className="text-xl text-gray-500">-53.6%</span>
+                <span className="text-sm text-gray-500">HODL ETH</span>
+              </div>
+              <p className="text-xs text-gray-500 mt-3">
+                Strategy outperformed by 25 percentage points
+              </p>
+            </div>
           </div>
         ) : (
           // Connected state - Full Dashboard
@@ -117,44 +147,26 @@ export default function Home() {
               <DelegationSetup />
               
               {/* How it works */}
-              <div className="p-6 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+              <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">
+                <h3 className="text-lg font-semibold text-white mb-4">
                   How It Works
                 </h3>
                 <div className="space-y-4">
-                  <div className="flex gap-4">
-                    <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center text-blue-600 dark:text-blue-400 font-bold shrink-0">
-                      1
+                  {[
+                    { step: 1, title: 'Connect & Fund', desc: 'Deposit ETH + USDC to your smart account' },
+                    { step: 2, title: 'Set Delegation', desc: 'Grant limited swap permission (revocable anytime)' },
+                    { step: 3, title: 'Automated DCA', desc: 'System checks F&G daily and executes within your limits' },
+                  ].map((item) => (
+                    <div key={item.step} className="flex gap-4">
+                      <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold shrink-0 border border-blue-500/30">
+                        {item.step}
+                      </div>
+                      <div>
+                        <p className="font-medium text-white">{item.title}</p>
+                        <p className="text-sm text-gray-500">{item.desc}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-medium text-gray-900 dark:text-white">Connect & Fund</p>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">
-                        Connect wallet and deposit ETH + USDC
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex gap-4">
-                    <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center text-blue-600 dark:text-blue-400 font-bold shrink-0">
-                      2
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-900 dark:text-white">Set Delegation</p>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">
-                        Grant limited swap permission (revocable anytime)
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex gap-4">
-                    <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center text-blue-600 dark:text-blue-400 font-bold shrink-0">
-                      3
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-900 dark:text-white">Automated DCA</p>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">
-                        System checks F&G daily and executes within your limits
-                      </p>
-                    </div>
-                  </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -163,27 +175,27 @@ export default function Home() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-gray-200 dark:border-gray-800 mt-16">
+      <footer className="relative border-t border-white/5 mt-16">
         <div className="max-w-6xl mx-auto px-4 py-6 flex flex-col md:flex-row items-center justify-between gap-4">
-          <p className="text-sm text-gray-500 dark:text-gray-400">
+          <p className="text-sm text-gray-500">
             Built by{' '}
             <a 
               href="https://ember.engineer" 
               target="_blank" 
               rel="noopener noreferrer"
-              className="text-blue-600 hover:underline"
+              className="text-blue-400 hover:text-blue-300 transition-colors"
             >
               Ember 🐉
             </a>
             {' '}• 100% of fees go to EMBER stakers
           </p>
-          <p className="text-xs text-gray-400 dark:text-gray-500">
+          <p className="text-xs text-gray-600">
             Data:{' '}
             <a 
               href="https://alternative.me/crypto/fear-and-greed-index/" 
               target="_blank" 
               rel="noopener noreferrer"
-              className="hover:underline"
+              className="hover:text-gray-400 transition-colors"
             >
               Alternative.me Fear & Greed Index
             </a>
