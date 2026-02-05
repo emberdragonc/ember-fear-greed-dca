@@ -18,7 +18,7 @@ export function DelegationSetup() {
   const { state: smartAccountState, smartAccountAddress } = useSmartAccount();
   const hasSmartAccount = smartAccountState.status === 'created' && !!smartAccountAddress;
 
-  const [basePercentage, setBasePercentage] = useState(5);
+  const [basePercentage, setBasePercentage] = useState(2.5);
   const [targetAsset, setTargetAsset] = useState('ETH');
   const [showDetails, setShowDetails] = useState(false);
 
@@ -149,6 +149,7 @@ export function DelegationSetup() {
               type="range"
               min="1"
               max="10"
+              step="0.5"
               value={basePercentage}
               onChange={(e) => setBasePercentage(Number(e.target.value))}
               className="flex-1 h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-blue-500"
