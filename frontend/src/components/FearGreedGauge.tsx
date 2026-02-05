@@ -111,7 +111,7 @@ export default function FearGreedGauge() {
         </svg>
 
         {/* Value display */}
-        <div className="absolute bottom-0 text-center">
+        <div className="absolute bottom-4 text-center">
           <div 
             className="text-4xl font-bold"
             style={{ color: colors.main, textShadow: `0 0 20px ${colors.glow}` }}
