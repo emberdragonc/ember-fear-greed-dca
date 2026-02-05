@@ -19,9 +19,25 @@ export default function Home() {
   const { data: fgData } = useFearGreed();
   const { stats } = useProtocolStats();
   const [isFunded, setIsFunded] = useState(false);
+  const [showHowItWorks, setShowHowItWorks] = useState(true);
+  
+  // Check localStorage for dismissed state
+  useState(() => {
+    if (typeof window !== 'undefined') {
+      const dismissed = localStorage.getItem('fg-dca-how-it-works-dismissed');
+      if (dismissed === 'true') setShowHowItWorks(false);
+    }
+  });
   
   const handleFundedChange = useCallback((funded: boolean) => {
     setIsFunded(funded);
+  }, []);
+  
+  const dismissHowItWorks = useCallback(() => {
+    setShowHowItWorks(false);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('fg-dca-how-it-works-dismissed', 'true');
+    }
   }, []);
 
   // Format large numbers
@@ -280,29 +296,40 @@ export default function Home() {
 
             {/* Right column - Instructions & Setup */}
             <div className="lg:col-span-2 space-y-6">
-              {/* How it works - First! */}
-              <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">
-                <h3 className="text-lg font-semibold text-white mb-4">
-                  How It Works
-                </h3>
-                <div className="space-y-4">
-                  {[
-                    { step: 1, title: 'Create Smart Account', desc: 'A secure ERC-4337 wallet for automated trading' },
-                    { step: 2, title: 'Fund Your Wallet', desc: 'Deposit ETH (for gas) + USDC (DCA capital)' },
-                    { step: 3, title: 'Activate DCA', desc: 'Sign delegation to enable automated swaps' },
-                  ].map((item) => (
-                    <div key={item.step} className="flex gap-4">
-                      <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold shrink-0 border border-blue-500/30">
-                        {item.step}
+              {/* How it works - Dismissible */}
+              {showHowItWorks && (
+                <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm relative">
+                  <button
+                    onClick={dismissHowItWorks}
+                    className="absolute top-4 right-4 p-1 text-gray-500 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                    title="Dismiss"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                  <h3 className="text-lg font-semibold text-white mb-4">
+                    How It Works
+                  </h3>
+                  <div className="space-y-4">
+                    {[
+                      { step: 1, title: 'Create Smart Account', desc: 'A secure ERC-4337 wallet for automated trading' },
+                      { step: 2, title: 'Fund Your Wallet', desc: 'Deposit ETH (for gas) + USDC (DCA capital)' },
+                      { step: 3, title: 'Activate DCA', desc: 'Sign delegation to enable automated swaps' },
+                    ].map((item) => (
+                      <div key={item.step} className="flex gap-4">
+                        <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold shrink-0 border border-blue-500/30">
+                          {item.step}
+                        </div>
+                        <div>
+                          <p className="font-medium text-white">{item.title}</p>
+                          <p className="text-sm text-gray-500">{item.desc}</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-medium text-white">{item.title}</p>
-                        <p className="text-sm text-gray-500">{item.desc}</p>
-                      </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               <SmartAccountCard />
               <FundWallet onFunded={handleFundedChange} />
