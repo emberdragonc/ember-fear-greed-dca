@@ -278,22 +278,18 @@ export default function Home() {
               <DCAExecutor />
             </div>
 
-            {/* Right column - Account & Delegation */}
+            {/* Right column - Instructions & Setup */}
             <div className="lg:col-span-2 space-y-6">
-              <SmartAccountCard />
-              <FundWallet onFunded={handleFundedChange} />
-              <DelegationSetup isFunded={isFunded} />
-              
-              {/* How it works */}
+              {/* How it works - First! */}
               <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">
                 <h3 className="text-lg font-semibold text-white mb-4">
                   How It Works
                 </h3>
                 <div className="space-y-4">
                   {[
-                    { step: 1, title: 'Connect & Fund', desc: 'Deposit ETH + USDC to your smart account' },
-                    { step: 2, title: 'Set Delegation', desc: 'Grant limited swap permission (revocable anytime)' },
-                    { step: 3, title: 'Automated DCA', desc: 'System checks F&G daily and executes within your limits' },
+                    { step: 1, title: 'Create Smart Account', desc: 'A secure ERC-4337 wallet for automated trading' },
+                    { step: 2, title: 'Fund Your Wallet', desc: 'Deposit ETH (for gas) + USDC (DCA capital)' },
+                    { step: 3, title: 'Activate DCA', desc: 'Sign delegation to enable automated swaps' },
                   ].map((item) => (
                     <div key={item.step} className="flex gap-4">
                       <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold shrink-0 border border-blue-500/30">
@@ -307,6 +303,10 @@ export default function Home() {
                   ))}
                 </div>
               </div>
+
+              <SmartAccountCard />
+              <FundWallet onFunded={handleFundedChange} />
+              <DelegationSetup isFunded={isFunded} />
 
               {/* Security Note */}
               <div className="p-4 bg-purple-500/10 rounded-xl border border-purple-500/20">
