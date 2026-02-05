@@ -110,15 +110,22 @@ export default function FearGreedGauge() {
           </g>
         </svg>
 
-        {/* Value display */}
-        <div className="absolute bottom-4 text-center">
+        {/* Value display - positioned above the needle center */}
+        <div 
+          className="absolute text-center"
+          style={{ bottom: '45px' }}
+        >
           <div 
             className="text-4xl font-bold"
             style={{ color: colors.main, textShadow: `0 0 20px ${colors.glow}` }}
           >
             {value}
           </div>
-          <div className="text-sm text-gray-400 capitalize mt-1">{classification}</div>
+        </div>
+        
+        {/* Classification - positioned below the gauge */}
+        <div className="text-sm text-gray-400 capitalize mt-2 text-center">
+          {classification}
         </div>
       </div>
 
