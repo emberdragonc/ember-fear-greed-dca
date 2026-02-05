@@ -1,18 +1,28 @@
-// FundWallet.tsx - Step 2: Fund the smart wallet
+// FundWallet.tsx - Step 2: Fund the smart wallet with deposit buttons
 'use client';
 
 import { useState, useEffect } from 'react';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
-import { usePublicClient } from 'wagmi';
-import { formatUnits } from 'viem';
+import { usePublicClient, useSendTransaction, useWriteContract } from 'wagmi';
+import { formatUnits, parseUnits, parseEther } from 'viem';
 import { TOKEN_ADDRESSES } from '@/lib/wagmi';
 
-const USDC_ABI = [
+const ERC20_ABI = [
   {
     inputs: [{ name: 'account', type: 'address' }],
     name: 'balanceOf',
     outputs: [{ name: '', type: 'uint256' }],
     stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { name: 'to', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    name: 'transfer',
+    outputs: [{ name: '', type: 'bool' }],
+    stateMutability: 'nonpayable',
     type: 'function',
   },
 ] as const;
@@ -30,8 +40,13 @@ export function FundWallet({ onFunded }: FundWalletProps) {
   const [ethBalance, setEthBalance] = useState<string>('0');
   const [usdcBalance, setUsdcBalance] = useState<string>('0');
   const [loading, setLoading] = useState(true);
-  const [copied, setCopied] = useState(false);
+  const [depositAmount, setDepositAmount] = useState('');
+  const [depositToken, setDepositToken] = useState<'USDC' | 'ETH'>('USDC');
 
+  const { sendTransaction, isPending: isSendingEth } = useSendTransaction();
+  const { writeContract, isPending: isSendingUsdc } = useWriteContract();
+  
+  const isPending = isSendingEth || isSendingUsdc;
   const isFunded = parseFloat(usdcBalance) >= MIN_USDC_BALANCE;
 
   // Fetch balances
@@ -50,7 +65,7 @@ export function FundWallet({ onFunded }: FundWalletProps) {
         // Fetch USDC balance
         const usdcBal = await publicClient.readContract({
           address: TOKEN_ADDRESSES.USDC as `0x${string}`,
-          abi: USDC_ABI,
+          abi: ERC20_ABI,
           functionName: 'balanceOf',
           args: [smartAccountAddress as `0x${string}`],
         } as any);
@@ -73,14 +88,27 @@ export function FundWallet({ onFunded }: FundWalletProps) {
     onFunded(isFunded);
   }, [isFunded, onFunded]);
 
-  const handleCopy = async () => {
-    if (!smartAccountAddress) return;
+  const handleDeposit = async () => {
+    if (!smartAccountAddress || !depositAmount) return;
+
     try {
-      await navigator.clipboard.writeText(smartAccountAddress);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Ignore
+      if (depositToken === 'ETH') {
+        await sendTransaction({
+          to: smartAccountAddress as `0x${string}`,
+          value: parseEther(depositAmount),
+        });
+      } else {
+        await writeContract({
+          address: TOKEN_ADDRESSES.USDC as `0x${string}`,
+          abi: ERC20_ABI,
+          functionName: 'transfer',
+          args: [smartAccountAddress as `0x${string}`, parseUnits(depositAmount, 6)],
+        } as any);
+      }
+      
+      setDepositAmount('');
+    } catch (error) {
+      console.error('Deposit failed:', error);
     }
   };
 
@@ -112,32 +140,7 @@ export function FundWallet({ onFunded }: FundWalletProps) {
         )}
       </div>
 
-      {/* Wallet Address */}
-      <div className="mb-4">
-        <label className="text-sm text-gray-500 mb-2 block">Send funds to this address:</label>
-        <div className="flex items-center gap-2">
-          <code className="flex-1 p-3 bg-black/30 rounded-xl text-sm font-mono text-gray-300 break-all border border-white/5">
-            {smartAccountAddress}
-          </code>
-          <button
-            onClick={handleCopy}
-            className="p-3 text-gray-400 hover:text-white hover:bg-white/10 rounded-xl transition-colors"
-            title="Copy address"
-          >
-            {copied ? (
-              <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-            ) : (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-              </svg>
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* Balances */}
+      {/* Current Balances */}
       <div className="grid grid-cols-2 gap-3 mb-4">
         <div className="p-3 bg-black/20 rounded-xl border border-white/5">
           <p className="text-xs text-gray-500 mb-1">ETH Balance</p>
@@ -153,12 +156,45 @@ export function FundWallet({ onFunded }: FundWalletProps) {
         </div>
       </div>
 
+      {/* Deposit Form */}
+      {!isFunded && (
+        <div className="mb-4 p-4 bg-blue-500/10 rounded-xl border border-blue-500/20">
+          <p className="text-sm text-blue-300 mb-3 font-medium">Deposit from your wallet</p>
+          <div className="flex gap-2 mb-3">
+            <select
+              value={depositToken}
+              onChange={(e) => setDepositToken(e.target.value as 'USDC' | 'ETH')}
+              className="px-3 py-2.5 bg-black/30 border border-white/10 rounded-xl text-white text-sm focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="USDC">USDC</option>
+              <option value="ETH">ETH</option>
+            </select>
+            <input
+              type="number"
+              placeholder={depositToken === 'USDC' ? '100' : '0.01'}
+              value={depositAmount}
+              onChange={(e) => setDepositAmount(e.target.value)}
+              className="flex-1 px-3 py-2.5 bg-black/30 border border-white/10 rounded-xl text-white text-sm placeholder-gray-500 focus:ring-2 focus:ring-blue-500"
+            />
+            <button
+              onClick={handleDeposit}
+              disabled={isPending || !depositAmount}
+              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl transition-colors"
+            >
+              {isPending ? 'Sending...' : 'Deposit'}
+            </button>
+          </div>
+          <p className="text-xs text-blue-400/70">
+            Deposits ETH or USDC directly from your connected wallet to your smart wallet.
+          </p>
+        </div>
+      )}
+
       {/* Status Message */}
       {!isFunded ? (
         <div className="p-3 bg-yellow-500/10 rounded-xl border border-yellow-500/20">
           <p className="text-sm text-yellow-400">
-            ⚠️ Minimum ${MIN_USDC_BALANCE} USDC required to activate DCA.
-            Send USDC + some ETH (for gas) to your smart wallet address above.
+            ⚠️ Minimum ${MIN_USDC_BALANCE} USDC required. Deposit USDC above + small ETH for gas.
           </p>
         </div>
       ) : (
