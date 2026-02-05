@@ -35,18 +35,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Save to database (storing all data in delegation_hash as JSON until schema is updated)
-    const fullData = JSON.stringify({
-      hash: delegationHash,
-      signature: signature,
-      data: delegationData,
-    });
-    
+    // Save to database with proper columns
     const { error } = await getSupabase()
       .from('delegations')
       .upsert({
         user_address: userAddress.toLowerCase(),
-        delegation_hash: fullData, // Storing full data here until schema updated
+        delegation_hash: delegationHash,
+        delegation_signature: signature,
+        delegation_data: delegationData,
         max_amount_per_swap: maxAmountPerSwap || '1000000000', // Default 1000 USDC
         expires_at: expiresAt,
       }, {
