@@ -95,9 +95,10 @@ export function useDelegation(): UseDelegationReturn {
               delegationHash: '',
               signature: 'stored-in-db',
               status: 'signed',
+              createdAt: new Date().toISOString(),
               expiresAt: result.expiresAt,
               caveats: {
-                allowedTargets: [],
+                allowedTargets: [] as `0x${string}`[],
                 allowedMethods: [],
                 maxCalls: DELEGATION_CONFIG.MAX_CALLS_PER_DAY,
                 expiry: BigInt(new Date(result.expiresAt).getTime()),
