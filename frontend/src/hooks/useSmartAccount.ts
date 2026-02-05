@@ -75,14 +75,13 @@ export function useSmartAccount() {
 
     try {
       // Create smart account with Hybrid implementation (EOA + passkey support)
+      // Use walletClient as signer (not walletClient.account) for proper signMessage support
       const smartAccount = await toMetaMaskSmartAccount({
         client: publicClient as any,
         implementation: Implementation.Hybrid,
         deployParams: [eoaAddress, [], [], []],
         deploySalt: '0x',
-        signer: {
-          account: walletClient.account,
-        },
+        signer: { walletClient },
       });
 
       // Check if account is deployed by checking code
@@ -129,9 +128,7 @@ export function useSmartAccount() {
         implementation: Implementation.Hybrid,
         deployParams: [eoaAddress, [], [], []],
         deploySalt: '0x',
-        signer: {
-          account: walletClient.account,
-        },
+        signer: { walletClient },
       });
 
       // Verify it matches the stored address
