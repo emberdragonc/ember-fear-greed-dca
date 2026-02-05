@@ -2,12 +2,11 @@
 'use client';
 
 import { useState } from 'react';
-import { useAccount, useBalance, useReadContract, useSendTransaction, useWriteContract, usePublicClient } from 'wagmi';
+import { useAccount, useBalance, useReadContract, useSendTransaction, useWriteContract } from 'wagmi';
 import { base } from 'wagmi/chains';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { TOKENS } from '@/lib/swap';
-import { formatUnits, parseUnits, parseEther, encodeFunctionData, http } from 'viem';
-import { createBundlerClient } from 'viem/account-abstraction';
+import { formatUnits, parseUnits, parseEther } from 'viem';
 
 // ERC20 ABI
 const erc20Abi = [
@@ -30,13 +29,9 @@ const erc20Abi = [
   },
 ] as const;
 
-// Bundler URL for Base (using public Pimlico endpoint)
-const BUNDLER_URL = 'https://public.pimlico.io/v2/8453/rpc';
-
 export function BalanceDisplay() {
   const { address: eoaAddress } = useAccount();
-  const { smartAccountAddress, smartAccount } = useSmartAccountContext();
-  const publicClient = usePublicClient();
+  const { smartAccountAddress } = useSmartAccountContext();
   
   const [depositAmount, setDepositAmount] = useState('');
   const [depositToken, setDepositToken] = useState<'ETH' | 'USDC'>('USDC');
@@ -77,9 +72,6 @@ export function BalanceDisplay() {
   // Format for display (rounded)
   const ethFormatted = ethBalance ? parseFloat(formatUnits(ethBalance.value, 18)).toFixed(4) : '0';
   const usdcFormatted = usdcBalanceRaw ? parseFloat(formatUnits(usdcBalanceRaw as bigint, 6)).toFixed(2) : '0';
-  
-  // Check if user has enough ETH for gas (~0.0001 ETH minimum for user op)
-  const hasGasForWithdraw = ethBalance && ethBalance.value > BigInt(100000000000000); // 0.0001 ETH
 
   const handleDeposit = async () => {
     if (!smartAccountAddress || !depositAmount) return;
@@ -112,43 +104,32 @@ export function BalanceDisplay() {
   };
 
   const handleWithdraw = async () => {
-    if (!smartAccountAddress || !smartAccount || !eoaAddress || !withdrawAmount || !publicClient) return;
+    if (!smartAccountAddress || !eoaAddress || !withdrawAmount) return;
 
     setIsWithdrawing(true);
     try {
-      // Create bundler client
-      const bundlerClient = createBundlerClient({
-        client: publicClient as any,
-        transport: http(BUNDLER_URL),
+      // Convert amount to wei/smallest unit
+      const amountInSmallestUnit = withdrawToken === 'ETH' 
+        ? parseEther(withdrawAmount).toString()
+        : parseUnits(withdrawAmount, 6).toString();
+
+      // Call backend API to execute withdrawal via delegation
+      const response = await fetch('/api/withdraw', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          smartAccountAddress,
+          recipientAddress: eoaAddress,
+          amount: amountInSmallestUnit,
+          token: withdrawToken,
+        }),
       });
 
-      let calls;
-      if (withdrawToken === 'ETH') {
-        // Send ETH to EOA
-        calls = [{
-          to: eoaAddress as `0x${string}`,
-          value: parseEther(withdrawAmount),
-        }];
-      } else {
-        // Transfer USDC to EOA
-        calls = [{
-          to: TOKENS.USDC,
-          data: encodeFunctionData({
-            abi: erc20Abi,
-            functionName: 'transfer',
-            args: [eoaAddress as `0x${string}`, parseUnits(withdrawAmount, 6)],
-          }),
-        }];
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Withdrawal failed');
       }
-
-      // Send user operation from smart account
-      const userOpHash = await bundlerClient.sendUserOperation({
-        account: smartAccount,
-        calls,
-      });
-
-      // Wait for receipt
-      await bundlerClient.waitForUserOperationReceipt({ hash: userOpHash });
 
       setWithdrawAmount('');
       setShowWithdraw(false);
@@ -156,10 +137,12 @@ export function BalanceDisplay() {
       setTimeout(() => {
         refetchEth();
         refetchUsdc();
-      }, 3000);
+      }, 5000);
+      
+      alert(`Withdrawal successful! Tx: ${result.txHash.slice(0, 10)}...`);
     } catch (error) {
       console.error('Withdraw failed:', error);
-      alert('Withdrawal failed. Make sure you have enough balance.');
+      alert(error instanceof Error ? error.message : 'Withdrawal failed');
     } finally {
       setIsWithdrawing(false);
     }
@@ -256,14 +239,9 @@ export function BalanceDisplay() {
               Max
             </button>
           </div>
-          {!hasGasForWithdraw && (
-            <p className="text-xs text-yellow-400 mb-2">
-              ⚠️ Need ~0.0001 ETH in smart wallet for withdrawal gas
-            </p>
-          )}
           <button
             onClick={handleWithdraw}
-            disabled={isWithdrawing || !withdrawAmount || !hasGasForWithdraw}
+            disabled={isWithdrawing || !withdrawAmount}
             className="w-full px-3 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors"
           >
             {isWithdrawing ? 'Processing...' : `Withdraw ${withdrawToken}`}
