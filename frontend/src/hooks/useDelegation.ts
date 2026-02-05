@@ -217,7 +217,7 @@ export function useDelegation(): UseDelegationReturn {
           validAfter: startTimestamp,
           validUntil: expiryTimestamp,
           maxCalls: Number(delegationData.caveats.maxCalls),
-          basePercentage: BigInt(basePercentage),
+          basePercentage: BigInt(Math.floor(basePercentage * 100)), // Convert % to basis points (2.5% -> 250)
         },
       };
 
