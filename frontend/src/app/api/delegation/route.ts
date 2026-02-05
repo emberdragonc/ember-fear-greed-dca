@@ -19,7 +19,8 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { 
-      userAddress, 
+      userAddress,
+      smartAccountAddress,
       delegationHash, 
       signature, 
       delegationData,
@@ -40,6 +41,7 @@ export async function POST(request: NextRequest) {
       .from('delegations')
       .upsert({
         user_address: userAddress.toLowerCase(),
+        smart_account_address: smartAccountAddress?.toLowerCase() || null,
         delegation_hash: delegationHash,
         delegation_signature: signature,
         delegation_data: delegationData,

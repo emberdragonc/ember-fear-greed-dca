@@ -28,7 +28,7 @@ export function DelegationSetup({ isFunded = false }: DelegationSetupProps) {
   const [showDetails, setShowDetails] = useState(false);
 
   const handleGrant = async () => {
-    await createAndSignDelegation(basePercentage, targetAsset);
+    await createAndSignDelegation(basePercentage, targetAsset, smartAccountAddress || undefined);
   };
 
   const handleRevoke = async () => {

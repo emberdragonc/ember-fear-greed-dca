@@ -34,7 +34,7 @@ interface DelegationState {
 
 interface UseDelegationReturn {
   state: DelegationState;
-  createAndSignDelegation: (basePercentage: number, targetAsset: string) => Promise<void>;
+  createAndSignDelegation: (basePercentage: number, targetAsset: string, smartAccountAddress?: string) => Promise<void>;
   revokeDelegation: () => Promise<void>;
   refreshDelegation: () => void;
   isExpired: boolean;
@@ -117,13 +117,14 @@ export function useDelegation(): UseDelegationReturn {
   }, [address, isConnected]);
 
   // Save delegation to Supabase via API (server-side with service key)
-  const saveDelegationToDb = async (delegation: StoredDelegation) => {
+  const saveDelegationToDb = async (delegation: StoredDelegation, smartAccountAddress?: string) => {
     try {
       const response = await fetch('/api/delegation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userAddress: delegation.delegator,
+          smartAccountAddress: smartAccountAddress,
           delegationHash: delegation.delegationHash,
           signature: delegation.signature,
           delegationData: {
@@ -174,7 +175,8 @@ export function useDelegation(): UseDelegationReturn {
   // Create and sign a new delegation
   const createAndSignDelegation = useCallback(async (
     basePercentage: number,
-    targetAsset: string
+    targetAsset: string,
+    smartAccountAddress?: string
   ) => {
     if (!address || !walletClient || !publicClient) {
       setState(prev => ({ ...prev, error: 'Wallet not connected' }));
@@ -267,8 +269,8 @@ export function useDelegation(): UseDelegationReturn {
       // Save to localStorage
       saveDelegation(delegationData);
       
-      // Save to Supabase for backend access
-      await saveDelegationToDb(delegationData);
+      // Save to Supabase for backend access (include smart account address for TVL tracking)
+      await saveDelegationToDb(delegationData, smartAccountAddress);
 
       setState({
         status: 'signed',

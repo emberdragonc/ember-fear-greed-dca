@@ -48,7 +48,7 @@ export async function GET() {
     // Get all active delegations
     const { data: delegations, error } = await supabase
       .from('delegations')
-      .select('user_address')
+      .select('user_address, smart_account_address')
       .gt('expires_at', new Date().toISOString());
 
     if (error) {
@@ -58,13 +58,14 @@ export async function GET() {
 
     const wallets = delegations?.length || 0;
 
-    // Calculate TVL by summing balances of all delegated wallets
+    // Calculate TVL by summing balances of smart accounts (fall back to EOA if no smart account)
     let tvl = 0;
     
     if (delegations && delegations.length > 0) {
       for (const d of delegations) {
         try {
-          const address = d.user_address as `0x${string}`;
+          // Prefer smart_account_address, fall back to user_address (EOA)
+          const address = (d.smart_account_address || d.user_address) as `0x${string}`;
           
           // Get ETH balance
           const ethBalance = await publicClient.getBalance({ address });
