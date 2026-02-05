@@ -135,6 +135,16 @@ export async function POST(request: NextRequest) {
       ? JSON.parse(delegation.delegation_data) 
       : delegation.delegation_data;
 
+    // Debug: check what we have
+    console.log('Delegation data:', JSON.stringify(delegationData, null, 2));
+    
+    if (!delegationData || !delegationData.encoded) {
+      return NextResponse.json(
+        { error: 'Delegation data is incomplete. Please revoke and re-sign your delegation.' },
+        { status: 400 }
+      );
+    }
+
     // Build the withdrawal execution
     let executionCallData: Hex;
     let executionValue = 0n;
