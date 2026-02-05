@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
 
     if (dbError || !delegation) {
       return NextResponse.json(
-        { error: 'No active delegation found. Please set up DCA first.' },
+        { error: 'No active delegation found. Please complete Step 3 - Configure DCA Delegation first.' },
         { status: 404 }
       );
     }
