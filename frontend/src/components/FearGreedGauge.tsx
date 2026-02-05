@@ -4,16 +4,32 @@ import { useEffect, useState } from "react";
 import {
   fetchFearGreed,
   FearGreedData,
-  getFGColor,
+  getFGColorHex,
   getGaugePercentage,
 } from "@/lib/fear-greed";
 
-export default function FearGreedGauge() {
+interface FearGreedGaugeProps {
+  value?: number;
+  showLabel?: boolean;
+  size?: 'sm' | 'md' | 'lg';
+}
+
+export default function FearGreedGauge({ value: externalValue, showLabel = true, size = 'md' }: FearGreedGaugeProps) {
   const [data, setData] = useState<FearGreedData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(externalValue === undefined);
   const [error, setError] = useState<string | null>(null);
 
+  // Use external value if provided, otherwise fetch
+  const displayValue = externalValue ?? data?.value ?? 50;
+  const displayLabel = data?.classification ?? getClassification(displayValue);
+
   useEffect(() => {
+    // If external value is provided, skip fetching
+    if (externalValue !== undefined) {
+      setLoading(false);
+      return;
+    }
+
     const loadData = async () => {
       try {
         const fg = await fetchFearGreed();
@@ -31,7 +47,13 @@ export default function FearGreedGauge() {
     // Refresh every 5 minutes
     const interval = setInterval(loadData, 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [externalValue]);
+
+  const sizeClasses = {
+    sm: 'w-32 h-16',
+    md: 'w-48 h-24',
+    lg: 'w-64 h-32',
+  };
 
   if (loading) {
     return (
@@ -44,112 +66,95 @@ export default function FearGreedGauge() {
     );
   }
 
-  if (error || !data) {
+  if (error && externalValue === undefined) {
     return (
       <div className="flex flex-col items-center justify-center p-8 rounded-2xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
-        <p className="text-red-600 dark:text-red-400">
-          {error || "Unable to load Fear & Greed data"}
-        </p>
+        <p className="text-red-600 dark:text-red-400">{error}</p>
       </div>
     );
   }
 
-  const colors = getFGColor(data.classification);
-  const percentage = getGaugePercentage(data.value);
+  const percentage = getGaugePercentage(displayValue);
+  const color = getFGColorHex(displayValue);
 
   return (
-    <div
-      className={`flex flex-col items-center p-8 rounded-2xl ${colors.bg} transition-colors duration-500`}
-    >
-      {/* Header */}
-      <div className="text-center mb-6">
-        <h2 className="text-2xl font-bold text-zinc-800 dark:text-zinc-100">
-          Crypto Fear &amp; Greed Index
-        </h2>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
-          Updated: {new Date(data.timestamp).toLocaleString()}
-        </p>
-      </div>
-
-      {/* Gauge */}
-      <div className="relative w-48 h-24 overflow-hidden">
-        <div className="absolute top-0 left-0 w-48 h-48 rounded-full bg-zinc-200 dark:bg-zinc-700">
-          <div
-            className="absolute top-0 left-0 w-full h-full rounded-full"
-            style={{
-              background: `conic-gradient(from 180deg, transparent ${percentage}%, #52525b ${percentage}%)`,
-              transform: "rotate(180deg)",
-            }}
-          />
-        </div>
-        <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2">
-          <div
-            className="w-1 h-20 origin-bottom bg-gradient-to-t rounded-full"
-            style={{
-              background: `linear-gradient(to top, ${getColorHex(data.value)}, transparent)`,
-              transform: `rotate(${percentage * 1.8 - 90}deg)`,
-            }}
-          />
-        </div>
-      </div>
-
-      {/* Value */}
-      <div className="text-center mt-4">
-        <span className="text-5xl font-bold text-zinc-800 dark:text-zinc-100">
-          {data.value}
-        </span>
-        <p
-          className={`text-xl font-semibold mt-2 ${colors.text} uppercase tracking-wider`}
-        >
-          {data.classification}
-        </p>
-      </div>
-
-      {/* Scale */}
-      <div className="w-full max-w-xs mt-6">
-        <div className="flex justify-between text-xs text-zinc-400 mb-1">
-          <span>Extreme Fear</span>
-          <span>Neutral</span>
-          <span>Extreme Greed</span>
-        </div>
-        <div className="h-3 rounded-full bg-gradient-to-r from-red-600 via-yellow-400 to-green-500" />
-        <div
-          className="w-3 h-4 bg-zinc-800 dark:bg-white rounded-full transform -translate-x-1/2 mt-1 transition-all duration-500"
-          style={{ marginLeft: `${percentage}%` }}
+    <div className="flex flex-col items-center">
+      {/* Gauge SVG */}
+      <svg viewBox="0 0 200 110" className={sizeClasses[size]}>
+        {/* Background arc */}
+        <path
+          d="M 20 100 A 80 80 0 0 1 180 100"
+          fill="none"
+          stroke="#e5e7eb"
+          strokeWidth="20"
+          strokeLinecap="round"
+          className="dark:stroke-zinc-700"
         />
-      </div>
-
-      {/* Legend */}
-      <div className="mt-6 grid grid-cols-2 gap-4 text-sm">
-        <div className="text-zinc-600 dark:text-zinc-400">
-          <span className="inline-block w-3 h-3 rounded-full bg-red-500 mr-2" />
-          0-25: Extreme Fear (Buy 2x)
-        </div>
-        <div className="text-zinc-600 dark:text-zinc-400">
-          <span className="inline-block w-3 h-3 rounded-full bg-orange-500 mr-2" />
-          26-45: Fear (Buy 1x)
-        </div>
-        <div className="text-zinc-600 dark:text-zinc-400">
-          <span className="inline-block w-3 h-3 rounded-full bg-yellow-500 mr-2" />
-          46-54: Neutral (Hold)
-        </div>
-        <div className="text-zinc-600 dark:text-zinc-400">
-          <span className="inline-block w-3 h-3 rounded-full bg-lime-500 mr-2" />
-          55-75: Greed (Sell 1x)
-        </div>
-        <div className="text-zinc-600 dark:text-zinc-400 col-span-2 text-center">
-          <span className="inline-block w-3 h-3 rounded-full bg-green-500 mr-2" />
-          76-100: Extreme Greed (Sell 2x)
-        </div>
-      </div>
+        
+        {/* Gradient arc */}
+        <defs>
+          <linearGradient id="gaugeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#ea3943" />
+            <stop offset="25%" stopColor="#f7931a" />
+            <stop offset="50%" stopColor="#999999" />
+            <stop offset="75%" stopColor="#93c47d" />
+            <stop offset="100%" stopColor="#16c784" />
+          </linearGradient>
+        </defs>
+        
+        <path
+          d="M 20 100 A 80 80 0 0 1 180 100"
+          fill="none"
+          stroke="url(#gaugeGradient)"
+          strokeWidth="20"
+          strokeLinecap="round"
+          opacity="0.3"
+        />
+        
+        {/* Needle */}
+        <g transform={`rotate(${-90 + (percentage * 1.8)}, 100, 100)`}>
+          <line
+            x1="100"
+            y1="100"
+            x2="100"
+            y2="35"
+            stroke={color}
+            strokeWidth="3"
+            strokeLinecap="round"
+          />
+          <circle cx="100" cy="100" r="8" fill={color} />
+        </g>
+        
+        {/* Value display */}
+        <text
+          x="100"
+          y="95"
+          textAnchor="middle"
+          className="fill-zinc-900 dark:fill-white text-2xl font-bold"
+          fontSize="24"
+        >
+          {displayValue}
+        </text>
+      </svg>
+      
+      {/* Label */}
+      {showLabel && (
+        <p
+          className="mt-2 text-lg font-semibold"
+          style={{ color }}
+        >
+          {displayLabel}
+        </p>
+      )}
     </div>
   );
 }
 
-function getColorHex(value: number): string {
-  if (value <= 25) return "#dc2626";
-  if (value <= 45) return "#ea580c";
-  if (value <= 54) return "#ca8a04";
-  if (value <= 75) return "#65a30d";
-  return "#16a34a";
+// Helper to get classification from value when no API data
+function getClassification(value: number): string {
+  if (value <= 25) return 'Extreme Fear';
+  if (value <= 45) return 'Fear';
+  if (value <= 54) return 'Neutral';
+  if (value <= 75) return 'Greed';
+  return 'Extreme Greed';
 }

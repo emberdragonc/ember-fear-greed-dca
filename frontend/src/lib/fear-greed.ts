@@ -106,3 +106,14 @@ export function getFGColor(
 export function getGaugePercentage(value: number): number {
   return Math.max(0, Math.min(100, value));
 }
+
+/**
+ * Get hex color for F&G value (for SVG usage)
+ */
+export function getFGColorHex(value: number): string {
+  if (value <= 25) return '#ea3943'; // Extreme Fear - Red
+  if (value <= 45) return '#f7931a'; // Fear - Orange
+  if (value <= 54) return '#999999'; // Neutral - Gray
+  if (value <= 75) return '#93c47d'; // Greed - Light Green
+  return '#16c784'; // Extreme Greed - Green
+}

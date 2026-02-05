@@ -5,12 +5,12 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAccount, usePublicClient, useWalletClient } from 'wagmi';
 import { Implementation, toMetaMaskSmartAccount } from '@metamask/smart-accounts-kit';
 import { http } from 'viem';
-import { type SmartAccount } from '@metamask/smart-accounts-kit';
+
 
 type SmartAccountState =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'created'; account: SmartAccount<Implementation.Hybrid>; address: string; isDeployed: boolean }
+  | { status: 'created'; account: any; address: string; isDeployed: boolean }
   | { status: 'error'; error: string };
 
 const SMART_ACCOUNT_STORAGE_KEY = 'fear-greed-dca-smart-account';

@@ -117,7 +117,7 @@ export function useDelegation(): UseDelegationReturn {
             delegationData.caveats.allowedTargets,
             startTimestamp,
             expiryTimestamp,
-            BigInt(delegationData.caveats.maxCalls),
+            Number(delegationData.caveats.maxCalls),
           ]
         )
       );
@@ -151,12 +151,12 @@ export function useDelegation(): UseDelegationReturn {
           allowedTarget: DELEGATION_ADDRESSES.UNISWAP_ROUTER,
           validAfter: startTimestamp,
           validUntil: expiryTimestamp,
-          maxCalls: BigInt(delegationData.caveats.maxCalls),
+          maxCalls: Number(delegationData.caveats.maxCalls),
           basePercentage: BigInt(basePercentage),
         },
       };
 
-      const signature = await walletClient.signTypedData(typedData);
+      const signature = await walletClient.signTypedData({ ...typedData, account: walletClient.account! });
       
       delegationData.signature = signature;
       delegationData.status = 'signed';

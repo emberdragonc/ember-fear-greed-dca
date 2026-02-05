@@ -2,7 +2,7 @@
 'use client';
 
 import { useFearGreed } from '@/hooks/useFearGreed';
-import { getFearGreedColor } from '@/lib/fearGreed';
+import { getFGColorHex } from '@/lib/fear-greed';
 import FearGreedGauge from './FearGreedGauge';
 
 interface ActionHistoryItem {
@@ -77,7 +77,7 @@ export function DCADashboard({ balances, actionHistory = [] }: DCADashboardProps
               <div className="mt-4 text-center">
                 <p 
                   className="text-2xl font-bold"
-                  style={{ color: getFearGreedColor(data.value) }}
+                  style={{ color: getFGColorHex(data.value) }}
                 >
                   {data.valueClassification}
                 </p>
