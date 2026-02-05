@@ -6,6 +6,7 @@ import { SmartAccountCard } from '@/components/SmartAccountCard';
 import { DelegationSetup } from '@/components/DelegationSetup';
 import { BalanceDisplay } from '@/components/BalanceDisplay';
 import { DCAExecutor } from '@/components/DCAExecutor';
+import { TestnetBanner } from '@/components/TestnetBanner';
 import FearGreedGauge from '@/components/FearGreedGauge';
 
 export default function Home() {
@@ -13,6 +14,9 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-black">
+      {/* Testnet Warning */}
+      <TestnetBanner />
+      
       {/* Header */}
       <header className="border-b border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
