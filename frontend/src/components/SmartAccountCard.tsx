@@ -1,11 +1,11 @@
 // SmartAccountCard.tsx - Display smart account info
 'use client';
 
-import { useSmartAccount } from '@/hooks/useSmartAccount';
+import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { useState } from 'react';
 
 export function SmartAccountCard() {
-  const { state, createSmartAccount, smartAccountAddress, isDeployed } = useSmartAccount();
+  const { state, createSmartAccount, smartAccountAddress, isDeployed } = useSmartAccountContext();
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {

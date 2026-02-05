@@ -3,7 +3,7 @@
 
 import { useState } from 'react';
 import { useDelegation } from '@/hooks/useDelegation';
-import { useSmartAccount } from '@/hooks/useSmartAccount';
+import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { formatExpiryDate, DELEGATION_CONFIG, DELEGATION_ADDRESSES } from '@/lib/delegation';
 
 export function DelegationSetup() {
@@ -15,7 +15,7 @@ export function DelegationSetup() {
     daysUntilExpiry,
   } = useDelegation();
   
-  const { state: smartAccountState, smartAccountAddress } = useSmartAccount();
+  const { state: smartAccountState, smartAccountAddress } = useSmartAccountContext();
   const hasSmartAccount = smartAccountState.status === 'created' && !!smartAccountAddress;
 
   const [basePercentage, setBasePercentage] = useState(2.5);

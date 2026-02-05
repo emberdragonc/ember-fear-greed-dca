@@ -6,6 +6,7 @@ import { WagmiProvider } from 'wagmi';
 import { RainbowKitProvider, darkTheme } from '@rainbow-me/rainbowkit';
 import '@rainbow-me/rainbowkit/styles.css';
 import { wagmiConfig } from '@/lib/wagmi';
+import { SmartAccountProvider } from '@/contexts/SmartAccountContext';
 import { ReactNode, useState } from 'react';
 
 export function Providers({ children }: { children: ReactNode }) {
@@ -33,7 +34,9 @@ export function Providers({ children }: { children: ReactNode }) {
             fontStack: 'system',
           })}
         >
-          {children}
+          <SmartAccountProvider>
+            {children}
+          </SmartAccountProvider>
         </RainbowKitProvider>
       </QueryClientProvider>
     </WagmiProvider>
