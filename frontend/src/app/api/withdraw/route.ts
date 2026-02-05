@@ -17,24 +17,49 @@ import { createClient } from '@supabase/supabase-js';
 const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as Address;
 const DELEGATION_MANAGER = '0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3' as Address;
 
-// Initialize clients
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY!
-);
+// Lazy-loaded clients (initialized on first request to avoid build-time env issues)
+let _supabase: ReturnType<typeof createClient> | null = null;
+let _publicClient: ReturnType<typeof createPublicClient> | null = null;
+let _walletClient: ReturnType<typeof createWalletClient> | null = null;
+let _backendAccount: ReturnType<typeof privateKeyToAccount> | null = null;
 
-const publicClient = createPublicClient({
-  chain: base,
-  transport: http(),
-});
+function getSupabase() {
+  if (!_supabase) {
+    _supabase = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_KEY!
+    );
+  }
+  return _supabase;
+}
 
-const backendAccount = privateKeyToAccount(process.env.BACKEND_PRIVATE_KEY as Hex);
+function getPublicClient(): any {
+  if (!_publicClient) {
+    _publicClient = createPublicClient({
+      chain: base,
+      transport: http(),
+    });
+  }
+  return _publicClient;
+}
 
-const walletClient = createWalletClient({
-  account: backendAccount,
-  chain: base,
-  transport: http(),
-});
+function getBackendAccount() {
+  if (!_backendAccount) {
+    _backendAccount = privateKeyToAccount(process.env.BACKEND_PRIVATE_KEY as Hex);
+  }
+  return _backendAccount;
+}
+
+function getWalletClient(): any {
+  if (!_walletClient) {
+    _walletClient = createWalletClient({
+      account: getBackendAccount(),
+      chain: base,
+      transport: http(),
+    });
+  }
+  return _walletClient;
+}
 
 // Delegation Manager ABI for executing via delegation
 const delegationManagerAbi = [
@@ -91,7 +116,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Get delegation from database
-    const { data: delegation, error: dbError } = await supabase
+    const { data: delegation, error: dbError } = await getSupabase()
       .from('delegations')
       .select('*')
       .eq('smart_account_address', smartAccountAddress.toLowerCase())
@@ -133,7 +158,7 @@ export async function POST(request: NextRequest) {
     );
 
     // Execute via DelegationManager
-    const txHash = await walletClient.writeContract({
+    const txHash = await getWalletClient().writeContract({
       address: DELEGATION_MANAGER,
       abi: delegationManagerAbi,
       functionName: 'redeemDelegations',
@@ -143,12 +168,12 @@ export async function POST(request: NextRequest) {
         [[executionEncoded]], // executions
       ],
       chain: base,
-      account: backendAccount,
+      account: getBackendAccount(),
       gas: 300000n,
     });
 
     // Wait for confirmation
-    const receipt = await publicClient.waitForTransactionReceipt({
+    const receipt = await getPublicClient().waitForTransactionReceipt({
       hash: txHash,
       timeout: 60000,
     });
