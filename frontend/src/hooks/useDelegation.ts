@@ -101,7 +101,7 @@ export function useDelegation(): UseDelegationReturn {
                 allowedTargets: [] as `0x${string}`[],
                 allowedMethods: [],
                 maxCalls: DELEGATION_CONFIG.MAX_CALLS_PER_DAY,
-                expiry: BigInt(new Date(result.expiresAt).getTime()),
+                expiry: BigInt(Math.floor(new Date(result.expiresAt).getTime() / 1000)), // Unix seconds
               },
               basePercentage: 2.5,
               targetAsset: 'ETH',
