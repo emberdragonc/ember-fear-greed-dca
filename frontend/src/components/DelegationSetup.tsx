@@ -3,6 +3,7 @@
 
 import { useState } from 'react';
 import { useDelegation } from '@/hooks/useDelegation';
+import { useSmartAccount } from '@/hooks/useSmartAccount';
 import { formatExpiryDate, DELEGATION_CONFIG, DELEGATION_ADDRESSES } from '@/lib/delegation';
 
 export function DelegationSetup() {
@@ -13,6 +14,9 @@ export function DelegationSetup() {
     isExpired,
     daysUntilExpiry,
   } = useDelegation();
+  
+  const { state: smartAccountState, smartAccountAddress } = useSmartAccount();
+  const hasSmartAccount = smartAccountState.status === 'created' && !!smartAccountAddress;
 
   const [basePercentage, setBasePercentage] = useState(5);
   const [targetAsset, setTargetAsset] = useState('ETH');
@@ -203,10 +207,21 @@ export function DelegationSetup() {
 
       <button
         onClick={handleGrant}
-        className="w-full px-4 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-500 hover:to-indigo-500 font-semibold transition-all shadow-lg shadow-blue-500/20"
+        disabled={!hasSmartAccount}
+        className={`w-full px-4 py-3 rounded-xl font-semibold transition-all ${
+          hasSmartAccount
+            ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-500 hover:to-indigo-500 shadow-lg shadow-blue-500/20'
+            : 'bg-gray-600/50 text-gray-400 cursor-not-allowed'
+        }`}
       >
         Sign & Activate DCA
       </button>
+      
+      {!hasSmartAccount && (
+        <p className="mt-3 text-center text-sm text-gray-500">
+          ↑ Create your Smart Account first
+        </p>
+      )}
     </div>
   );
 }
