@@ -2,11 +2,12 @@
 'use client';
 
 import { useState } from 'react';
-import { useAccount, useBalance, useReadContract, useSendTransaction, useWriteContract, usePublicClient } from 'wagmi';
+import { useAccount, useBalance, useReadContract, useSendTransaction, useWriteContract, usePublicClient, useWalletClient } from 'wagmi';
 import { base } from 'wagmi/chains';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { TOKENS } from '@/lib/swap';
-import { formatUnits, parseUnits, parseEther, encodeFunctionData } from 'viem';
+import { formatUnits, parseUnits, parseEther, encodeFunctionData, http } from 'viem';
+import { createBundlerClient } from 'viem/account-abstraction';
 
 // ERC20 ABI
 const erc20Abi = [
@@ -29,10 +30,14 @@ const erc20Abi = [
   },
 ] as const;
 
+// Pimlico bundler URL for Base (free tier)
+const BUNDLER_URL = 'https://public.pimlico.io/v2/8453/rpc';
+
 export function BalanceDisplay() {
   const { address: eoaAddress } = useAccount();
   const { smartAccountAddress, smartAccount } = useSmartAccountContext();
   const publicClient = usePublicClient();
+  const { data: walletClient } = useWalletClient();
   
   const [depositAmount, setDepositAmount] = useState('');
   const [depositToken, setDepositToken] = useState<'ETH' | 'USDC'>('USDC');
@@ -109,9 +114,13 @@ export function BalanceDisplay() {
 
     setIsWithdrawing(true);
     try {
-      // Withdraw FROM the smart account using its execute method
-      // The smart account can execute calls on behalf of the owner (EOA)
-      
+      // Create bundler client for ERC-4337 user operations
+      const bundlerClient = createBundlerClient({
+        client: publicClient,
+        transport: http(BUNDLER_URL),
+      });
+
+      // Withdraw FROM the smart account using bundler
       let calls: { to: `0x${string}`; value: bigint; data: `0x${string}` }[];
       
       if (withdrawToken === 'ETH') {
@@ -135,11 +144,16 @@ export function BalanceDisplay() {
         }];
       }
 
-      // Execute through the smart account
-      const userOpHash = await smartAccount.sendUserOperation({ calls });
+      // Send user operation through bundler
+      const userOpHash = await bundlerClient.sendUserOperation({
+        account: smartAccount,
+        calls,
+      });
       
       // Wait for the user operation to be included
-      const receipt = await smartAccount.waitForUserOperation({ hash: userOpHash });
+      const receipt = await bundlerClient.waitForUserOperationReceipt({ 
+        hash: userOpHash,
+      });
       
       if (!receipt.success) {
         throw new Error('User operation failed');
