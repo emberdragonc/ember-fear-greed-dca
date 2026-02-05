@@ -2,11 +2,12 @@
 'use client';
 
 import { useState } from 'react';
-import { useAccount, useBalance, useReadContract, useSendTransaction, useWriteContract } from 'wagmi';
+import { useAccount, useBalance, useReadContract, useSendTransaction, useWriteContract, usePublicClient } from 'wagmi';
 import { base } from 'wagmi/chains';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { TOKENS } from '@/lib/swap';
-import { formatUnits, parseUnits, parseEther } from 'viem';
+import { formatUnits, parseUnits, parseEther, encodeFunctionData, http } from 'viem';
+import { createBundlerClient } from 'viem/account-abstraction';
 
 // ERC20 ABI
 const erc20Abi = [
@@ -29,12 +30,22 @@ const erc20Abi = [
   },
 ] as const;
 
+// Bundler URL for Base (using public Pimlico endpoint)
+const BUNDLER_URL = 'https://public.pimlico.io/v2/8453/rpc';
+
 export function BalanceDisplay() {
   const { address: eoaAddress } = useAccount();
-  const { smartAccountAddress } = useSmartAccountContext();
+  const { smartAccountAddress, smartAccount } = useSmartAccountContext();
+  const publicClient = usePublicClient();
+  
   const [depositAmount, setDepositAmount] = useState('');
   const [depositToken, setDepositToken] = useState<'ETH' | 'USDC'>('USDC');
   const [showDeposit, setShowDeposit] = useState(false);
+  
+  const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [withdrawToken, setWithdrawToken] = useState<'ETH' | 'USDC'>('USDC');
+  const [showWithdraw, setShowWithdraw] = useState(false);
+  const [isWithdrawing, setIsWithdrawing] = useState(false);
 
   const { sendTransaction, isPending: isSendingEth } = useSendTransaction();
   const { writeContract, isPending: isSendingUsdc } = useWriteContract();
@@ -93,6 +104,60 @@ export function BalanceDisplay() {
     }
   };
 
+  const handleWithdraw = async () => {
+    if (!smartAccountAddress || !smartAccount || !eoaAddress || !withdrawAmount || !publicClient) return;
+
+    setIsWithdrawing(true);
+    try {
+      // Create bundler client
+      const bundlerClient = createBundlerClient({
+        client: publicClient as any,
+        transport: http(BUNDLER_URL),
+      });
+
+      let calls;
+      if (withdrawToken === 'ETH') {
+        // Send ETH to EOA
+        calls = [{
+          to: eoaAddress as `0x${string}`,
+          value: parseEther(withdrawAmount),
+        }];
+      } else {
+        // Transfer USDC to EOA
+        calls = [{
+          to: TOKENS.USDC,
+          data: encodeFunctionData({
+            abi: erc20Abi,
+            functionName: 'transfer',
+            args: [eoaAddress as `0x${string}`, parseUnits(withdrawAmount, 6)],
+          }),
+        }];
+      }
+
+      // Send user operation from smart account
+      const userOpHash = await bundlerClient.sendUserOperation({
+        account: smartAccount,
+        calls,
+      });
+
+      // Wait for receipt
+      await bundlerClient.waitForUserOperationReceipt({ hash: userOpHash });
+
+      setWithdrawAmount('');
+      setShowWithdraw(false);
+      // Refetch balances after a delay
+      setTimeout(() => {
+        refetchEth();
+        refetchUsdc();
+      }, 3000);
+    } catch (error) {
+      console.error('Withdraw failed:', error);
+      alert('Withdrawal failed. Make sure you have enough balance.');
+    } finally {
+      setIsWithdrawing(false);
+    }
+  };
+
   if (!smartAccountAddress) {
     return (
       <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">
@@ -108,12 +173,20 @@ export function BalanceDisplay() {
     <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-medium text-gray-400">Smart Wallet Balances</h3>
-        <button
-          onClick={() => setShowDeposit(!showDeposit)}
-          className="text-xs text-blue-400 hover:text-blue-300 font-medium"
-        >
-          {showDeposit ? 'Cancel' : '+ Deposit'}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => { setShowDeposit(!showDeposit); setShowWithdraw(false); }}
+            className={`text-xs font-medium ${showDeposit ? 'text-gray-400' : 'text-blue-400 hover:text-blue-300'}`}
+          >
+            {showDeposit ? 'Cancel' : '+ Deposit'}
+          </button>
+          <button
+            onClick={() => { setShowWithdraw(!showWithdraw); setShowDeposit(false); }}
+            className={`text-xs font-medium ${showWithdraw ? 'text-gray-400' : 'text-orange-400 hover:text-orange-300'}`}
+          >
+            {showWithdraw ? 'Cancel' : '↑ Withdraw'}
+          </button>
+        </div>
       </div>
       
       {/* Deposit Form */}
@@ -143,6 +216,45 @@ export function BalanceDisplay() {
             className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors"
           >
             {isPending ? 'Processing...' : `Deposit ${depositToken}`}
+          </button>
+        </div>
+      )}
+      
+      {/* Withdraw Form */}
+      {showWithdraw && (
+        <div className="mb-4 p-3 bg-orange-500/10 rounded-xl border border-orange-500/20">
+          <p className="text-xs text-orange-400 mb-2">Withdraw from Smart Wallet to your EOA</p>
+          <div className="flex gap-2 mb-2">
+            <select
+              value={withdrawToken}
+              onChange={(e) => setWithdrawToken(e.target.value as 'ETH' | 'USDC')}
+              className="px-3 py-2 bg-black/30 border border-white/10 rounded-lg text-white text-sm"
+            >
+              <option value="USDC">USDC</option>
+              <option value="ETH">ETH</option>
+            </select>
+            <input
+              type="number"
+              placeholder={withdrawToken === 'USDC' ? usdcFormatted : ethFormatted}
+              value={withdrawAmount}
+              onChange={(e) => setWithdrawAmount(e.target.value)}
+              className="flex-1 px-3 py-2 bg-black/30 border border-white/10 rounded-lg text-white text-sm"
+            />
+          </div>
+          <div className="flex gap-2 mb-2">
+            <button
+              onClick={() => setWithdrawAmount(withdrawToken === 'USDC' ? usdcFormatted : ethFormatted)}
+              className="text-xs text-orange-400 hover:text-orange-300"
+            >
+              Max
+            </button>
+          </div>
+          <button
+            onClick={handleWithdraw}
+            disabled={isWithdrawing || !withdrawAmount}
+            className="w-full px-3 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors"
+          >
+            {isWithdrawing ? 'Processing...' : `Withdraw ${withdrawToken}`}
           </button>
         </div>
       )}

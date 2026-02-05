@@ -24,6 +24,7 @@ interface SmartAccountContextValue {
   loadExistingAccount: () => Promise<void>;
   clearStoredAddress: () => void;
   smartAccountAddress: string | null;
+  smartAccount: any | null;
   isDeployed: boolean;
 }
 
@@ -186,6 +187,7 @@ export function SmartAccountProvider({ children }: { children: ReactNode }) {
     loadExistingAccount,
     clearStoredAddress,
     smartAccountAddress: state.status === 'created' ? state.address : null,
+    smartAccount: state.status === 'created' ? state.account : null,
     isDeployed: state.status === 'created' ? state.isDeployed : false,
   };
 
