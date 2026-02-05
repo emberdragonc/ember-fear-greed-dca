@@ -78,21 +78,17 @@ export function useDelegation(): UseDelegationReturn {
     }
   }, [address, isConnected]);
 
-  // Save delegation to Supabase
+  // Save delegation to Supabase via API (server-side with service key)
   const saveDelegationToDb = async (delegation: StoredDelegation) => {
-    if (!supabase) {
-      console.warn('Supabase not configured, delegation only stored locally');
-      return;
-    }
-
     try {
-      const { error } = await supabase
-        .from('delegations')
-        .upsert({
-          user_address: delegation.delegator.toLowerCase(),
-          delegation_hash: delegation.delegationHash,
-          delegation_signature: delegation.signature,
-          delegation_data: JSON.stringify({
+      const response = await fetch('/api/delegation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userAddress: delegation.delegator,
+          delegationHash: delegation.delegationHash,
+          signature: delegation.signature,
+          delegationData: {
             delegate: delegation.delegate,
             delegator: delegation.delegator,
             caveats: {
@@ -101,15 +97,16 @@ export function useDelegation(): UseDelegationReturn {
             },
             basePercentage: delegation.basePercentage,
             targetAsset: delegation.targetAsset,
-          }),
-          max_amount_per_swap: DELEGATION_CONFIG.MAX_SWAP_AMOUNT_USDC.toString(),
-          expires_at: delegation.expiresAt,
-        }, {
-          onConflict: 'user_address',
-        });
+          },
+          maxAmountPerSwap: DELEGATION_CONFIG.MAX_SWAP_AMOUNT_USDC.toString(),
+          expiresAt: delegation.expiresAt,
+        }),
+      });
 
-      if (error) {
-        console.error('Failed to save delegation to DB:', error);
+      const result = await response.json();
+      
+      if (!response.ok) {
+        console.error('Failed to save delegation to DB:', result.error);
       } else {
         console.log('Delegation saved to database');
       }
