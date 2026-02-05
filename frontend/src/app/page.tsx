@@ -84,10 +84,11 @@ export default function Home() {
                 Buy the Fear.<br />
                 <span className="text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-emerald-500">Sell the Greed.</span>
               </h2>
-              <p className="text-lg text-gray-400 max-w-lg mx-auto">
+              <p className="text-lg text-gray-400 max-w-lg mx-auto mb-6">
                 Automated DCA based on the Crypto Fear & Greed Index. 
                 Accumulate when others panic, take profits when they're euphoric.
               </p>
+              <WalletConnect />
             </div>
             
             {/* 2. Strategy Cards - Explain the rules */}
