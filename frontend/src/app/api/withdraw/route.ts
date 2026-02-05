@@ -130,8 +130,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Parse delegation data
-    const delegationData = JSON.parse(delegation.delegation_data);
+    // Parse delegation data (stored in delegation_hash as JSON until schema updated)
+    const storedData = JSON.parse(delegation.delegation_hash);
+    const delegationData = storedData.data;
 
     // Build the withdrawal execution
     let executionCallData: Hex;
