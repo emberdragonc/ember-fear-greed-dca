@@ -130,9 +130,17 @@ export const DELEGATION_STORAGE_KEY = 'fear-greed-dca-delegation';
 export function saveDelegation(delegation: StoredDelegation): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(DELEGATION_STORAGE_KEY, JSON.stringify(delegation));
-  } catch {
-    // Ignore storage errors
+    // Convert BigInt to string for JSON serialization
+    const toStore = {
+      ...delegation,
+      caveats: {
+        ...delegation.caveats,
+        expiry: delegation.caveats.expiry.toString(),
+      },
+    };
+    localStorage.setItem(DELEGATION_STORAGE_KEY, JSON.stringify(toStore));
+  } catch (e) {
+    console.error('Failed to save delegation:', e);
   }
 }
 
