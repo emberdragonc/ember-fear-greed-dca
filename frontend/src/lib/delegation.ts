@@ -22,8 +22,8 @@ export const BACKEND_SIGNER = (process.env.NEXT_PUBLIC_BACKEND_SIGNER ||
 
 // Delegation caveats configuration
 export const DELEGATION_CONFIG = {
-  // Timestamp caveat: delegation valid for 30 days
-  VALIDITY_DAYS: 30,
+  // Timestamp caveat: delegation valid for 1 year
+  VALIDITY_DAYS: 365,
   // Limited calls caveat: max 1 call per day
   MAX_CALLS_PER_DAY: 1,
   // Value limits for swaps
@@ -33,7 +33,7 @@ export const DELEGATION_CONFIG = {
   MAX_GAS_LIMIT: 500000n,
 } as const;
 
-// Calculate expiry timestamp (30 days from now)
+// Calculate expiry timestamp (1 year from now)
 export function calculateExpiryTimestamp(): bigint {
   const now = Math.floor(Date.now() / 1000);
   const thirtyDaysInSeconds = DELEGATION_CONFIG.VALIDITY_DAYS * 24 * 60 * 60;

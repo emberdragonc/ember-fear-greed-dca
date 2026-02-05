@@ -7,7 +7,7 @@ import { SmartAccountCard } from '@/components/SmartAccountCard';
 import { FundWallet } from '@/components/FundWallet';
 import { DelegationSetup } from '@/components/DelegationSetup';
 import { BalanceDisplay } from '@/components/BalanceDisplay';
-import { DCAExecutor } from '@/components/DCAExecutor';
+// DCAExecutor removed - automated DCA only, no manual execution
 import { TransactionHistory } from '@/components/TransactionHistory';
 import { TestnetBanner } from '@/components/TestnetBanner';
 import FearGreedGauge from '@/components/FearGreedGauge';
@@ -291,7 +291,6 @@ export default function Home() {
               <FearGreedGauge />
               <BalanceDisplay />
               <TransactionHistory />
-              <DCAExecutor />
             </div>
 
             {/* Right column - Instructions & Setup */}
