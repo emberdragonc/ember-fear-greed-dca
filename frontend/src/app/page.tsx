@@ -117,17 +117,17 @@ export default function Home() {
 
             {/* Backtest Results */}
             <div className="mt-16 p-6 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-blue-500/10 border border-emerald-500/20 max-w-md">
-              <p className="text-xs text-emerald-400 font-medium mb-2">📊 1-Year Backtest (2024)</p>
+              <p className="text-xs text-emerald-400 font-medium mb-2">📊 Full Cycle Backtest (2022-2024)</p>
               <div className="flex items-baseline gap-3 mb-2">
-                <span className="text-3xl font-bold text-white">-28.6%</span>
+                <span className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-green-400">+175%</span>
                 <span className="text-sm text-gray-400">F&G DCA</span>
               </div>
               <div className="flex items-baseline gap-3">
-                <span className="text-xl text-gray-500">-53.6%</span>
+                <span className="text-xl text-gray-500">+82%</span>
                 <span className="text-sm text-gray-500">HODL ETH</span>
               </div>
               <p className="text-xs text-gray-500 mt-3">
-                Strategy outperformed by 25 percentage points
+                Buy fear, sell greed — 2x better than holding
               </p>
             </div>
           </div>
