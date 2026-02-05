@@ -97,8 +97,9 @@ export function useDelegation(): UseDelegationReturn {
               status: 'signed',
               expiresAt: result.expiresAt,
               caveats: {
+                allowedTargets: [],
+                allowedMethods: [],
                 maxCalls: DELEGATION_CONFIG.MAX_CALLS_PER_DAY,
-                maxSwapAmount: DELEGATION_CONFIG.MAX_SWAP_AMOUNT_USDC,
                 expiry: BigInt(new Date(result.expiresAt).getTime()),
               },
               basePercentage: 2.5,
