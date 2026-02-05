@@ -98,10 +98,10 @@ function encodeExecution(target: Address, value: bigint, callData: Hex): Hex {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { smartAccountAddress, recipientAddress, amount, token } = body;
+    const { smartAccountAddress, recipientAddress, userAddress, amount, token } = body;
 
     // Validate inputs
-    if (!smartAccountAddress || !recipientAddress || !amount || !token) {
+    if (!smartAccountAddress || !recipientAddress || !userAddress || !amount || !token) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
@@ -115,11 +115,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get delegation from database
+    // Get delegation from database (lookup by user's EOA address)
     const { data: delegation, error: dbError } = await getSupabase()
       .from('delegations')
       .select('*')
-      .eq('smart_account_address', smartAccountAddress.toLowerCase())
+      .eq('user_address', userAddress.toLowerCase())
       .gt('expires_at', new Date().toISOString())
       .single();
 

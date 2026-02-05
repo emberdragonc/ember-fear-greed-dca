@@ -120,6 +120,7 @@ export function BalanceDisplay() {
         body: JSON.stringify({
           smartAccountAddress,
           recipientAddress: eoaAddress,
+          userAddress: eoaAddress, // EOA for delegation lookup
           amount: amountInSmallestUnit,
           token: withdrawToken,
         }),
