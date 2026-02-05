@@ -88,7 +88,9 @@ export default function Home() {
                 Automated DCA based on the Crypto Fear & Greed Index. 
                 Accumulate when others panic, take profits when they're euphoric.
               </p>
-              <WalletConnect />
+              <div className="flex justify-center">
+                <WalletConnect />
+              </div>
             </div>
             
             {/* 2. Strategy Cards - Explain the rules */}
