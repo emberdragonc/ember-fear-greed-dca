@@ -108,30 +108,26 @@ export function BalanceDisplay() {
 
     setIsWithdrawing(true);
     try {
-      // Convert amount to wei/smallest unit
-      const amountInSmallestUnit = withdrawToken === 'ETH' 
-        ? parseEther(withdrawAmount).toString()
-        : parseUnits(withdrawAmount, 6).toString();
-
-      // Call backend API to execute withdrawal via delegation
-      const response = await fetch('/api/withdraw', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          smartAccountAddress,
-          recipientAddress: eoaAddress,
-          userAddress: eoaAddress, // EOA for delegation lookup
-          amount: amountInSmallestUnit,
-          token: withdrawToken,
-        }),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || 'Withdrawal failed');
+      // Direct withdrawal from smart account (user owns it, no delegation needed)
+      // The "smart account" in this context is actually the same as EOA for RainbowKit
+      // So we just need to send the tokens to themselves (or they're already there)
+      
+      if (withdrawToken === 'ETH') {
+        // ETH: Direct send to EOA
+        await sendTransaction({
+          to: eoaAddress as `0x${string}`,
+          value: parseEther(withdrawAmount),
+        });
+      } else {
+        // USDC: Transfer to EOA
+        await writeContract({
+          address: TOKENS.USDC,
+          abi: erc20Abi,
+          functionName: 'transfer',
+          args: [eoaAddress as `0x${string}`, parseUnits(withdrawAmount, 6)],
+        } as any);
       }
-
+      
       setWithdrawAmount('');
       setShowWithdraw(false);
       // Refetch balances after a delay
@@ -140,7 +136,6 @@ export function BalanceDisplay() {
         refetchUsdc();
       }, 5000);
       
-      alert(`Withdrawal successful! Tx: ${result.txHash.slice(0, 10)}...`);
     } catch (error) {
       console.error('Withdraw failed:', error);
       alert(error instanceof Error ? error.message : 'Withdrawal failed');
