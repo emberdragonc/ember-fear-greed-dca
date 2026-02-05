@@ -8,15 +8,39 @@ import { BalanceDisplay } from '@/components/BalanceDisplay';
 import { DCAExecutor } from '@/components/DCAExecutor';
 import { TestnetBanner } from '@/components/TestnetBanner';
 import FearGreedGauge from '@/components/FearGreedGauge';
+import { useFearGreed } from '@/hooks/useFearGreed';
+import { useProtocolStats } from '@/hooks/useProtocolStats';
 
 export default function Home() {
   const { isConnected } = useAccount();
+  const { data: fgData } = useFearGreed();
+  const { stats } = useProtocolStats();
+
+  // Format large numbers
+  const formatUSD = (value: number) => {
+    if (value >= 1000000) return `$${(value / 1000000).toFixed(2)}M`;
+    if (value >= 1000) return `$${(value / 1000).toFixed(1)}K`;
+    return `$${value.toFixed(0)}`;
+  };
 
   return (
     <div className="min-h-screen bg-[#0a0b0d]">
       {/* Gradient Background */}
       <div className="fixed inset-0 bg-gradient-to-br from-blue-950/30 via-transparent to-purple-950/20 pointer-events-none" />
       <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none" />
+      
+      {/* AI Warning Banner */}
+      <div className="bg-gradient-to-r from-purple-500/20 to-pink-500/20 border-b border-purple-500/30">
+        <div className="max-w-6xl mx-auto px-4 py-2 flex items-center justify-center gap-2">
+          <span className="text-purple-400 text-sm">🤖</span>
+          <p className="text-sm text-purple-200">
+            <span className="font-semibold">Built by AI</span>
+            <span className="text-purple-300/70 ml-1">
+              — This app was created by Ember, an autonomous AI agent. Use at your own risk.
+            </span>
+          </p>
+        </div>
+      </div>
       
       {/* Testnet Warning */}
       <TestnetBanner />
@@ -46,6 +70,59 @@ export default function Home() {
         {!isConnected ? (
           // Not connected state - Landing page
           <div className="flex flex-col items-center justify-center min-h-[70vh] text-center">
+            
+            {/* Live F&G Status */}
+            {fgData && (
+              <div className="mb-8 p-4 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-sm">
+                <div className="flex items-center gap-6">
+                  <div className="text-center">
+                    <p className="text-xs text-gray-500 mb-1">Current Index</p>
+                    <p className={`text-4xl font-bold ${
+                      fgData.value <= 25 ? 'text-red-400' :
+                      fgData.value <= 45 ? 'text-orange-400' :
+                      fgData.value <= 54 ? 'text-gray-400' :
+                      fgData.value <= 75 ? 'text-lime-400' :
+                      'text-green-400'
+                    }`}>
+                      {fgData.value}
+                    </p>
+                  </div>
+                  <div className="h-12 w-px bg-white/10" />
+                  <div className="text-left">
+                    <p className="text-xs text-gray-500 mb-1">Classification</p>
+                    <p className="text-lg font-semibold text-white capitalize">{fgData.valueClassification}</p>
+                    <p className={`text-sm font-bold ${
+                      fgData.value <= 45 ? 'text-emerald-400' :
+                      fgData.value <= 54 ? 'text-gray-400' :
+                      'text-red-400'
+                    }`}>
+                      {fgData.value <= 25 ? '→ BUY 5%' :
+                       fgData.value <= 45 ? '→ BUY 2.5%' :
+                       fgData.value <= 54 ? '→ HOLD' :
+                       fgData.value <= 75 ? '→ SELL 2.5%' :
+                       '→ SELL 5%'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Protocol Stats */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8 w-full max-w-2xl">
+              {[
+                { label: 'Total TVL', value: formatUSD(stats.tvl), icon: '💰' },
+                { label: 'Volume', value: formatUSD(stats.volume), icon: '📊' },
+                { label: 'Wallets', value: stats.wallets.toString(), icon: '👛' },
+                { label: 'Executions', value: stats.executions.toString(), icon: '⚡' },
+              ].map((stat, i) => (
+                <div key={i} className="p-4 rounded-xl bg-white/5 border border-white/10 text-center">
+                  <span className="text-lg">{stat.icon}</span>
+                  <p className="text-xl font-bold text-white mt-1">{stat.value}</p>
+                  <p className="text-xs text-gray-500">{stat.label}</p>
+                </div>
+              ))}
+            </div>
+
             {/* Hero */}
             <div className="mb-8">
               <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-sm mb-6">
@@ -76,10 +153,11 @@ export default function Home() {
               ].map((item, i) => (
                 <div 
                   key={i} 
-                  className={`p-3 md:p-4 rounded-xl bg-${item.color}-500/10 border border-${item.color}-500/20 backdrop-blur-sm transition-all hover:scale-105 hover:border-${item.color}-500/40`}
+                  className={`p-3 md:p-4 rounded-xl backdrop-blur-sm transition-all hover:scale-105`}
                   style={{
                     background: `rgba(${item.color === 'red' ? '239,68,68' : item.color === 'orange' ? '249,115,22' : item.color === 'gray' ? '107,114,128' : item.color === 'lime' ? '132,204,22' : '34,197,94'}, 0.1)`,
                     borderColor: `rgba(${item.color === 'red' ? '239,68,68' : item.color === 'orange' ? '249,115,22' : item.color === 'gray' ? '107,114,128' : item.color === 'lime' ? '132,204,22' : '34,197,94'}, 0.2)`,
+                    border: '1px solid',
                   }}
                 >
                   <div className="text-2xl mb-1">{item.emoji}</div>
@@ -90,6 +168,53 @@ export default function Home() {
                   </p>
                 </div>
               ))}
+            </div>
+
+            {/* Security Practices */}
+            <div className="w-full max-w-2xl mb-10">
+              <h3 className="text-lg font-semibold text-white mb-4 text-left">🔐 Security Practices</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {[
+                  { 
+                    icon: '🏦', 
+                    title: 'No Custom Contracts', 
+                    desc: 'Uses only audited infrastructure: MetaMask Smart Accounts + Uniswap Router' 
+                  },
+                  { 
+                    icon: '🔑', 
+                    title: 'Non-Custodial', 
+                    desc: 'You control your smart account. Withdraw anytime, no permission needed.' 
+                  },
+                  { 
+                    icon: '⏰', 
+                    title: 'Time-Bound Delegation', 
+                    desc: 'Backend access expires automatically. Revoke anytime.' 
+                  },
+                  { 
+                    icon: '🚫', 
+                    title: 'Limited Scope', 
+                    desc: 'Backend can ONLY swap within your limits. Cannot withdraw funds.' 
+                  },
+                  { 
+                    icon: '📋', 
+                    title: 'Audited Stack', 
+                    desc: 'MetaMask + Uniswap = battle-tested, professionally audited.' 
+                  },
+                  { 
+                    icon: '👁️', 
+                    title: 'Open Source', 
+                    desc: 'Full source code available. Verify everything yourself.' 
+                  },
+                ].map((item, i) => (
+                  <div key={i} className="p-4 rounded-xl bg-white/5 border border-white/10 text-left flex gap-3">
+                    <span className="text-xl">{item.icon}</span>
+                    <div>
+                      <p className="font-medium text-white text-sm">{item.title}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">{item.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Features */}
@@ -169,6 +294,23 @@ export default function Home() {
                   ))}
                 </div>
               </div>
+
+              {/* Security Note */}
+              <div className="p-4 bg-purple-500/10 rounded-xl border border-purple-500/20">
+                <div className="flex items-start gap-3">
+                  <span className="text-xl">🤖</span>
+                  <div>
+                    <p className="font-medium text-purple-300 text-sm">Built by AI</p>
+                    <p className="text-xs text-purple-400/70 mt-1">
+                      This app was created by Ember, an autonomous AI agent. It uses only audited 
+                      contracts (MetaMask Smart Accounts + Uniswap). No custom smart contracts. 
+                      <a href="https://github.com/emberdragonc/ember-fear-greed-dca" target="_blank" rel="noopener noreferrer" className="underline ml-1">
+                        View source →
+                      </a>
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -189,17 +331,28 @@ export default function Home() {
             </a>
             {' '}• 100% of fees go to EMBER stakers
           </p>
-          <p className="text-xs text-gray-600">
-            Data:{' '}
+          <div className="flex items-center gap-4">
             <a 
-              href="https://alternative.me/crypto/fear-and-greed-index/" 
-              target="_blank" 
+              href="https://github.com/emberdragonc/ember-fear-greed-dca"
+              target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-gray-400 transition-colors"
+              className="text-xs text-gray-500 hover:text-gray-400"
             >
-              Alternative.me Fear & Greed Index
+              GitHub
             </a>
-          </p>
+            <span className="text-gray-700">•</span>
+            <p className="text-xs text-gray-600">
+              Data:{' '}
+              <a 
+                href="https://alternative.me/crypto/fear-and-greed-index/" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="hover:text-gray-400 transition-colors"
+              >
+                Alternative.me
+              </a>
+            </p>
+          </div>
         </div>
       </footer>
     </div>
