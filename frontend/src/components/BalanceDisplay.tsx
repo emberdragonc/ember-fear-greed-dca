@@ -1,12 +1,14 @@
-// BalanceDisplay - Shows ETH and USDC balances
+// BalanceDisplay - Shows Smart Wallet ETH and USDC balances with deposit/withdraw
 'use client';
 
-import { useAccount, useBalance, useReadContract } from 'wagmi';
+import { useState } from 'react';
+import { useAccount, useBalance, useReadContract, useSendTransaction, useWriteContract } from 'wagmi';
 import { base } from 'wagmi/chains';
+import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { TOKENS } from '@/lib/swap';
-import { formatUnits } from 'viem';
+import { formatUnits, parseUnits, parseEther } from 'viem';
 
-// ERC20 ABI for balanceOf
+// ERC20 ABI
 const erc20Abi = [
   {
     name: 'balanceOf',
@@ -15,44 +17,135 @@ const erc20Abi = [
     inputs: [{ name: 'account', type: 'address' }],
     outputs: [{ name: 'balance', type: 'uint256' }],
   },
+  {
+    name: 'transfer',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'to', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'bool' }],
+  },
 ] as const;
 
-interface BalanceDisplayProps {
-  onBalancesLoaded?: (balances: { eth: string; usdc: string }) => void;
-}
+export function BalanceDisplay() {
+  const { address: eoaAddress } = useAccount();
+  const { smartAccountAddress } = useSmartAccountContext();
+  const [depositAmount, setDepositAmount] = useState('');
+  const [depositToken, setDepositToken] = useState<'ETH' | 'USDC'>('USDC');
+  const [showDeposit, setShowDeposit] = useState(false);
 
-export function BalanceDisplay({ onBalancesLoaded }: BalanceDisplayProps) {
-  const { address } = useAccount();
+  const { sendTransaction, isPending: isSendingEth } = useSendTransaction();
+  const { writeContract, isPending: isSendingUsdc } = useWriteContract();
 
-  // ETH balance
-  const { data: ethBalance, isLoading: ethLoading } = useBalance({
-    address,
+  // Smart wallet ETH balance
+  const { data: ethBalance, isLoading: ethLoading, refetch: refetchEth } = useBalance({
+    address: smartAccountAddress as `0x${string}` | undefined,
     chainId: base.id,
+    query: { enabled: !!smartAccountAddress },
   });
 
-  // USDC balance via ERC20 balanceOf
-  const { data: usdcBalanceRaw, isLoading: usdcLoading } = useReadContract({
+  // Smart wallet USDC balance
+  const { data: usdcBalanceRaw, isLoading: usdcLoading, refetch: refetchUsdc } = useReadContract({
     address: TOKENS.USDC,
     abi: erc20Abi,
     functionName: 'balanceOf',
-    args: address ? [address] : undefined,
+    args: smartAccountAddress ? [smartAccountAddress as `0x${string}`] : undefined,
     chainId: base.id,
-    query: {
-      enabled: !!address,
-    },
-  });
+    query: { enabled: !!smartAccountAddress },
+  } as any);
 
   const isLoading = ethLoading || usdcLoading;
+  const isPending = isSendingEth || isSendingUsdc;
 
   // Format for display
   const ethFormatted = ethBalance ? parseFloat(formatUnits(ethBalance.value, 18)).toFixed(4) : '0';
   const usdcFormatted = usdcBalanceRaw ? parseFloat(formatUnits(usdcBalanceRaw as bigint, 6)).toFixed(2) : '0';
 
+  const handleDeposit = async () => {
+    if (!smartAccountAddress || !depositAmount) return;
+
+    try {
+      if (depositToken === 'ETH') {
+        await sendTransaction({
+          to: smartAccountAddress as `0x${string}`,
+          value: parseEther(depositAmount),
+        });
+      } else {
+        await writeContract({
+          address: TOKENS.USDC,
+          abi: erc20Abi,
+          functionName: 'transfer',
+          args: [smartAccountAddress as `0x${string}`, parseUnits(depositAmount, 6)],
+        } as any);
+      }
+      
+      setDepositAmount('');
+      setShowDeposit(false);
+      // Refetch balances after a delay
+      setTimeout(() => {
+        refetchEth();
+        refetchUsdc();
+      }, 3000);
+    } catch (error) {
+      console.error('Deposit failed:', error);
+    }
+  };
+
+  if (!smartAccountAddress) {
+    return (
+      <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">
+        <h3 className="text-sm font-medium text-gray-400 mb-4">Smart Wallet Balances</h3>
+        <p className="text-sm text-gray-500 text-center py-4">
+          Create a smart account to view balances
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">
-      <h3 className="text-sm font-medium text-gray-400 mb-4">
-        Wallet Balances
-      </h3>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-sm font-medium text-gray-400">Smart Wallet Balances</h3>
+        <button
+          onClick={() => setShowDeposit(!showDeposit)}
+          className="text-xs text-blue-400 hover:text-blue-300 font-medium"
+        >
+          {showDeposit ? 'Cancel' : '+ Deposit'}
+        </button>
+      </div>
+      
+      {/* Deposit Form */}
+      {showDeposit && (
+        <div className="mb-4 p-3 bg-blue-500/10 rounded-xl border border-blue-500/20">
+          <p className="text-xs text-blue-400 mb-2">Deposit from your EOA to Smart Wallet</p>
+          <div className="flex gap-2 mb-2">
+            <select
+              value={depositToken}
+              onChange={(e) => setDepositToken(e.target.value as 'ETH' | 'USDC')}
+              className="px-3 py-2 bg-black/30 border border-white/10 rounded-lg text-white text-sm"
+            >
+              <option value="USDC">USDC</option>
+              <option value="ETH">ETH</option>
+            </select>
+            <input
+              type="number"
+              placeholder={depositToken === 'USDC' ? '100.00' : '0.01'}
+              value={depositAmount}
+              onChange={(e) => setDepositAmount(e.target.value)}
+              className="flex-1 px-3 py-2 bg-black/30 border border-white/10 rounded-lg text-white text-sm"
+            />
+          </div>
+          <button
+            onClick={handleDeposit}
+            disabled={isPending || !depositAmount}
+            className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors"
+          >
+            {isPending ? 'Processing...' : `Deposit ${depositToken}`}
+          </button>
+        </div>
+      )}
       
       {isLoading ? (
         <div className="flex items-center justify-center h-20">
@@ -68,7 +161,7 @@ export function BalanceDisplay({ onBalancesLoaded }: BalanceDisplayProps) {
               </div>
               <div>
                 <p className="font-medium text-white">ETH</p>
-                <p className="text-xs text-gray-500">Ethereum</p>
+                <p className="text-xs text-gray-500">For gas</p>
               </div>
             </div>
             <div className="text-right">
@@ -87,14 +180,11 @@ export function BalanceDisplay({ onBalancesLoaded }: BalanceDisplayProps) {
               </div>
               <div>
                 <p className="font-medium text-white">USDC</p>
-                <p className="text-xs text-gray-500">USD Coin</p>
+                <p className="text-xs text-gray-500">DCA capital</p>
               </div>
             </div>
             <div className="text-right">
-              <p className="font-bold text-white">{usdcFormatted}</p>
-              <p className="text-xs text-gray-500">
-                ≈ ${usdcFormatted}
-              </p>
+              <p className="font-bold text-white">${usdcFormatted}</p>
             </div>
           </div>
         </div>

@@ -8,6 +8,7 @@ import { FundWallet } from '@/components/FundWallet';
 import { DelegationSetup } from '@/components/DelegationSetup';
 import { BalanceDisplay } from '@/components/BalanceDisplay';
 import { DCAExecutor } from '@/components/DCAExecutor';
+import { TransactionHistory } from '@/components/TransactionHistory';
 import { TestnetBanner } from '@/components/TestnetBanner';
 import FearGreedGauge from '@/components/FearGreedGauge';
 import { useFearGreed } from '@/hooks/useFearGreed';
@@ -269,10 +270,11 @@ export default function Home() {
         ) : (
           // Connected state - Full Dashboard
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left column - Fear & Greed + Balances */}
+            {/* Left column - Fear & Greed + Balances + History */}
             <div className="lg:col-span-1 space-y-6">
               <FearGreedGauge />
               <BalanceDisplay />
+              <TransactionHistory />
               <DCAExecutor />
             </div>
 
