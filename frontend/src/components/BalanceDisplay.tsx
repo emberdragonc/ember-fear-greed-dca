@@ -116,7 +116,7 @@ export function BalanceDisplay() {
     try {
       // Create bundler client for ERC-4337 user operations
       const bundlerClient = createBundlerClient({
-        client: publicClient,
+        chain: base,
         transport: http(BUNDLER_URL),
       });
 
