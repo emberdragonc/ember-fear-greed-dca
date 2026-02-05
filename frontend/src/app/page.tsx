@@ -68,63 +68,11 @@ export default function Home() {
       {/* Main Content */}
       <main className="relative max-w-6xl mx-auto px-4 py-8">
         {!isConnected ? (
-          // Not connected state - Landing page
+          // Not connected state - Landing page (CRO-optimized order)
           <div className="flex flex-col items-center justify-center min-h-[70vh] text-center">
             
-            {/* Live F&G Status */}
-            {fgData && (
-              <div className="mb-8 p-4 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-sm">
-                <div className="flex items-center gap-6">
-                  <div className="text-center">
-                    <p className="text-xs text-gray-500 mb-1">Current Index</p>
-                    <p className={`text-4xl font-bold ${
-                      fgData.value <= 25 ? 'text-red-400' :
-                      fgData.value <= 45 ? 'text-orange-400' :
-                      fgData.value <= 54 ? 'text-gray-400' :
-                      fgData.value <= 75 ? 'text-lime-400' :
-                      'text-green-400'
-                    }`}>
-                      {fgData.value}
-                    </p>
-                  </div>
-                  <div className="h-12 w-px bg-white/10" />
-                  <div className="text-left">
-                    <p className="text-xs text-gray-500 mb-1">Classification</p>
-                    <p className="text-lg font-semibold text-white capitalize">{fgData.valueClassification}</p>
-                    <p className={`text-sm font-bold ${
-                      fgData.value <= 45 ? 'text-emerald-400' :
-                      fgData.value <= 54 ? 'text-gray-400' :
-                      'text-red-400'
-                    }`}>
-                      {fgData.value <= 25 ? '→ BUY 5%' :
-                       fgData.value <= 45 ? '→ BUY 2.5%' :
-                       fgData.value <= 54 ? '→ HOLD' :
-                       fgData.value <= 75 ? '→ SELL 2.5%' :
-                       '→ SELL 5%'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Protocol Stats */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8 w-full max-w-2xl">
-              {[
-                { label: 'Total TVL', value: formatUSD(stats.tvl), icon: '💰' },
-                { label: 'Volume', value: formatUSD(stats.volume), icon: '📊' },
-                { label: 'Wallets', value: stats.wallets.toString(), icon: '👛' },
-                { label: 'Executions', value: stats.executions.toString(), icon: '⚡' },
-              ].map((stat, i) => (
-                <div key={i} className="p-4 rounded-xl bg-white/5 border border-white/10 text-center">
-                  <span className="text-lg">{stat.icon}</span>
-                  <p className="text-xl font-bold text-white mt-1">{stat.value}</p>
-                  <p className="text-xs text-gray-500">{stat.label}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* Hero */}
-            <div className="mb-8">
+            {/* 1. Hero - Hook them first */}
+            <div className="mb-10">
               <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-sm mb-6">
                 <span className="relative flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
@@ -142,7 +90,7 @@ export default function Home() {
               </p>
             </div>
             
-            {/* Strategy Cards */}
+            {/* 2. Strategy Cards - Explain the rules */}
             <div className="grid grid-cols-5 gap-2 md:gap-3 max-w-2xl mb-10 w-full">
               {[
                 { range: '0-25', emoji: '😱', label: 'Extreme Fear', action: 'BUY 5%', color: 'red', actionColor: 'emerald' },
@@ -170,7 +118,90 @@ export default function Home() {
               ))}
             </div>
 
-            {/* Security Practices */}
+            {/* 3. Live F&G + Backtest Side by Side - Proof it works */}
+            <div className="flex flex-col md:flex-row gap-4 max-w-2xl w-full mb-10">
+              {/* Live F&G Status */}
+              {fgData && (
+                <div className="flex-1 p-5 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-sm">
+                  <p className="text-xs text-blue-400 font-medium mb-3">🔴 LIVE NOW</p>
+                  <div className="flex items-center gap-4">
+                    <div className="text-center">
+                      <p className={`text-5xl font-bold ${
+                        fgData.value <= 25 ? 'text-red-400' :
+                        fgData.value <= 45 ? 'text-orange-400' :
+                        fgData.value <= 54 ? 'text-gray-400' :
+                        fgData.value <= 75 ? 'text-lime-400' :
+                        'text-green-400'
+                      }`}>
+                        {fgData.value}
+                      </p>
+                      <p className="text-sm text-gray-500 capitalize mt-1">{fgData.valueClassification}</p>
+                    </div>
+                    <div className="h-16 w-px bg-white/10" />
+                    <div className="text-left">
+                      <p className="text-xs text-gray-500 mb-1">Today's Action</p>
+                      <p className={`text-xl font-bold ${
+                        fgData.value <= 45 ? 'text-emerald-400' :
+                        fgData.value <= 54 ? 'text-gray-400' :
+                        'text-red-400'
+                      }`}>
+                        {fgData.value <= 25 ? 'BUY 5%' :
+                         fgData.value <= 45 ? 'BUY 2.5%' :
+                         fgData.value <= 54 ? 'HOLD' :
+                         fgData.value <= 75 ? 'SELL 2.5%' :
+                         'SELL 5%'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Backtest Results */}
+              <div className="flex-1 p-5 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-blue-500/10 border border-emerald-500/20">
+                <p className="text-xs text-emerald-400 font-medium mb-3">📊 BACKTEST 2022-2024</p>
+                <div className="flex items-baseline gap-3 mb-2">
+                  <span className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-green-400">+175%</span>
+                  <span className="text-sm text-gray-400">F&G DCA</span>
+                </div>
+                <div className="flex items-baseline gap-3">
+                  <span className="text-xl text-gray-500">+82%</span>
+                  <span className="text-sm text-gray-500">vs HODL ETH</span>
+                </div>
+              </div>
+            </div>
+
+            {/* 4. Features - Value props */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-2xl mb-10 w-full">
+              {[
+                { icon: '🔐', title: 'Non-Custodial', desc: 'Your keys, your crypto. Always.' },
+                { icon: '⚡', title: 'Fully Automated', desc: 'Set it and forget it.' },
+                { icon: '🐉', title: '0.15% Fee', desc: '100% to EMBER stakers.' },
+              ].map((feature, i) => (
+                <div key={i} className="p-5 rounded-xl bg-white/5 border border-white/10 backdrop-blur-sm hover:bg-white/[0.07] hover:border-white/20 transition-all">
+                  <div className="text-2xl mb-3">{feature.icon}</div>
+                  <p className="font-semibold text-white mb-1">{feature.title}</p>
+                  <p className="text-sm text-gray-500">{feature.desc}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* 5. Protocol Stats - Social proof */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-10 w-full max-w-2xl">
+              {[
+                { label: 'Total TVL', value: formatUSD(stats.tvl), icon: '💰' },
+                { label: 'Volume', value: formatUSD(stats.volume), icon: '📊' },
+                { label: 'Wallets', value: stats.wallets.toString(), icon: '👛' },
+                { label: 'Executions', value: stats.executions.toString(), icon: '⚡' },
+              ].map((stat, i) => (
+                <div key={i} className="p-4 rounded-xl bg-white/5 border border-white/10 text-center">
+                  <span className="text-lg">{stat.icon}</span>
+                  <p className="text-xl font-bold text-white mt-1">{stat.value}</p>
+                  <p className="text-xs text-gray-500">{stat.label}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* 6. Security Practices - Address objections */}
             <div className="w-full max-w-2xl mb-10">
               <h3 className="text-lg font-semibold text-white mb-4 text-left">🔐 Security Practices</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -217,42 +248,11 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Features */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-2xl mb-10 w-full">
-              {[
-                { icon: '🔐', title: 'Non-Custodial', desc: 'Your keys, your crypto. Always.' },
-                { icon: '⚡', title: 'Fully Automated', desc: 'Set it and forget it.' },
-                { icon: '🐉', title: '0.15% Fee', desc: '100% to EMBER stakers.' },
-              ].map((feature, i) => (
-                <div key={i} className="p-5 rounded-xl bg-white/5 border border-white/10 backdrop-blur-sm hover:bg-white/[0.07] hover:border-white/20 transition-all">
-                  <div className="text-2xl mb-3">{feature.icon}</div>
-                  <p className="font-semibold text-white mb-1">{feature.title}</p>
-                  <p className="text-sm text-gray-500">{feature.desc}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* CTA */}
+            {/* 7. Final CTA */}
             <div className="flex flex-col items-center gap-4">
               <WalletConnect />
               <p className="text-sm text-gray-500">
                 Connect wallet to get started
-              </p>
-            </div>
-
-            {/* Backtest Results */}
-            <div className="mt-16 p-6 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-blue-500/10 border border-emerald-500/20 max-w-md">
-              <p className="text-xs text-emerald-400 font-medium mb-2">📊 Full Cycle Backtest (2022-2024)</p>
-              <div className="flex items-baseline gap-3 mb-2">
-                <span className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-green-400">+175%</span>
-                <span className="text-sm text-gray-400">F&G DCA</span>
-              </div>
-              <div className="flex items-baseline gap-3">
-                <span className="text-xl text-gray-500">+82%</span>
-                <span className="text-sm text-gray-500">HODL ETH</span>
-              </div>
-              <p className="text-xs text-gray-500 mt-3">
-                Buy fear, sell greed — 2x better than holding
               </p>
             </div>
           </div>
