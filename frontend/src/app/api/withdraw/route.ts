@@ -133,17 +133,17 @@ export async function POST(request: NextRequest) {
     );
 
     // Execute via DelegationManager
-    const txHash = await walletClient.sendTransaction({
-      to: DELEGATION_MANAGER,
-      data: encodeFunctionData({
-        abi: delegationManagerAbi,
-        functionName: 'redeemDelegations',
-        args: [
-          [[delegationData.encoded]], // delegations
-          [0], // modes (0 = SingleDefault)
-          [[executionEncoded]], // executions
-        ],
-      }),
+    const txHash = await walletClient.writeContract({
+      address: DELEGATION_MANAGER,
+      abi: delegationManagerAbi,
+      functionName: 'redeemDelegations',
+      args: [
+        [[delegationData.encoded]], // delegations
+        [0], // modes (0 = SingleDefault)
+        [[executionEncoded]], // executions
+      ],
+      chain: base,
+      account: backendAccount,
       gas: 300000n,
     });
 
