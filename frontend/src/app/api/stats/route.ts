@@ -1,0 +1,97 @@
+// Stats API - fetch protocol stats (wallets, TVL)
+import { NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
+import { createPublicClient, http, formatUnits } from 'viem';
+import { base } from 'viem/chains';
+
+const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+const ETH_PRICE_USD = 2500; // TODO: fetch from oracle
+
+// ERC20 balanceOf
+const erc20Abi = [{
+  name: 'balanceOf',
+  type: 'function',
+  stateMutability: 'view',
+  inputs: [{ name: 'account', type: 'address' }],
+  outputs: [{ name: '', type: 'uint256' }],
+}] as const;
+
+// Lazy-loaded clients
+let _supabase: any = null;
+let _publicClient: any = null;
+
+function getSupabase() {
+  if (!_supabase) {
+    _supabase = createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_KEY!
+    );
+  }
+  return _supabase;
+}
+
+function getPublicClient() {
+  if (!_publicClient) {
+    _publicClient = createPublicClient({
+      chain: base,
+      transport: http(),
+    });
+  }
+  return _publicClient;
+}
+
+export async function GET() {
+  try {
+    const supabase = getSupabase();
+    const publicClient = getPublicClient();
+
+    // Get all active delegations
+    const { data: delegations, error } = await supabase
+      .from('delegations')
+      .select('user_address')
+      .gt('expires_at', new Date().toISOString());
+
+    if (error) {
+      console.error('Failed to fetch delegations:', error);
+      return NextResponse.json({ wallets: 0, tvl: 0 });
+    }
+
+    const wallets = delegations?.length || 0;
+
+    // Calculate TVL by summing balances of all delegated wallets
+    let tvl = 0;
+    
+    if (delegations && delegations.length > 0) {
+      for (const d of delegations) {
+        try {
+          const address = d.user_address as `0x${string}`;
+          
+          // Get ETH balance
+          const ethBalance = await publicClient.getBalance({ address });
+          const ethValue = parseFloat(formatUnits(ethBalance, 18)) * ETH_PRICE_USD;
+          
+          // Get USDC balance
+          const usdcBalance = await publicClient.readContract({
+            address: USDC as `0x${string}`,
+            abi: erc20Abi,
+            functionName: 'balanceOf',
+            args: [address],
+          });
+          const usdcValue = parseFloat(formatUnits(usdcBalance, 6));
+          
+          tvl += ethValue + usdcValue;
+        } catch (err) {
+          console.error(`Failed to fetch balance for ${d.user_address}:`, err);
+        }
+      }
+    }
+
+    return NextResponse.json({
+      wallets,
+      tvl: Math.round(tvl * 100) / 100, // Round to 2 decimals
+    });
+  } catch (error) {
+    console.error('Stats API error:', error);
+    return NextResponse.json({ wallets: 0, tvl: 0 });
+  }
+}

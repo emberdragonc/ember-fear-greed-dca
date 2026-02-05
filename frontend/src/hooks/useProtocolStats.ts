@@ -1,19 +1,15 @@
-// useProtocolStats - Fetch protocol TVL and volume stats from Supabase
+// useProtocolStats - Fetch protocol TVL and wallet stats from API
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
 
 interface ProtocolStats {
-  tvl: number;           // Total value locked in USD (placeholder for now)
+  tvl: number;           // Total value locked in USD
   volume: number;        // Total volume processed in USD
   wallets: number;       // Number of active wallets
   executions: number;    // Total DCA executions
   fees: number;          // Total fees collected
 }
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 export function useProtocolStats() {
   const [stats, setStats] = useState<ProtocolStats>({
@@ -28,49 +24,17 @@ export function useProtocolStats() {
 
   useEffect(() => {
     async function fetchStats() {
-      // Return defaults if Supabase not configured
-      if (!supabaseUrl || !supabaseKey) {
-        setStats({
-          tvl: 0,
-          volume: 0,
-          wallets: 0,
-          executions: 0,
-          fees: 0,
-        });
-        setLoading(false);
-        return;
-      }
-
       try {
-        const supabase = createClient(supabaseUrl, supabaseKey);
+        const response = await fetch('/api/stats');
+        const data = await response.json();
 
-        // Fetch from protocol_overview view
-        const { data, error: fetchError } = await supabase
-          .from('protocol_overview')
-          .select('*')
-          .single();
-
-        if (fetchError) {
-          // View might not exist yet, return defaults
-          console.warn('Protocol stats not available:', fetchError.message);
-          setStats({
-            tvl: 0,
-            volume: 0,
-            wallets: 0,
-            executions: 0,
-            fees: 0,
-          });
-        } else if (data) {
-          // Convert from base units to USD
-          // Assuming volume/fees are in USDC (6 decimals)
-          setStats({
-            tvl: 0, // TODO: Calculate from smart account balances
-            volume: parseFloat(data.total_volume) / 1e6,
-            wallets: data.active_wallets || 0,
-            executions: data.total_executions || 0,
-            fees: parseFloat(data.total_fees) / 1e6,
-          });
-        }
+        setStats({
+          tvl: data.tvl || 0,
+          volume: data.volume || 0,
+          wallets: data.wallets || 0,
+          executions: data.executions || 0,
+          fees: data.fees || 0,
+        });
       } catch (err) {
         console.error('Failed to fetch protocol stats:', err);
         setError(err instanceof Error ? err : new Error('Failed to fetch stats'));
