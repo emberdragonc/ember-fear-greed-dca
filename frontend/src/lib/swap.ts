@@ -187,7 +187,7 @@ function prepareSwapRequest(
 }
 
 function validateSwapResponse(swap: SwapTransaction): void {
-  if (!swap.data || swap.data === '' || swap.data === '0x') {
+  if (!swap.data || swap.data === '0x' || swap.data.length <= 2) {
     throw new Error('swap.data is empty - quote may have expired. Please refresh.');
   }
   if (!isHex(swap.data)) {

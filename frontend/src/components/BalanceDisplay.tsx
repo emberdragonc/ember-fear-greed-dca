@@ -1,10 +1,21 @@
 // BalanceDisplay - Shows ETH and USDC balances
 'use client';
 
-import { useAccount, useBalance } from 'wagmi';
+import { useAccount, useBalance, useReadContract } from 'wagmi';
 import { base } from 'wagmi/chains';
 import { TOKENS } from '@/lib/swap';
 import { formatUnits } from 'viem';
+
+// ERC20 ABI for balanceOf
+const erc20Abi = [
+  {
+    name: 'balanceOf',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: 'balance', type: 'uint256' }],
+  },
+] as const;
 
 interface BalanceDisplayProps {
   onBalancesLoaded?: (balances: { eth: string; usdc: string }) => void;
@@ -19,18 +30,23 @@ export function BalanceDisplay({ onBalancesLoaded }: BalanceDisplayProps) {
     chainId: base.id,
   });
 
-  // USDC balance
-  const { data: usdcBalance, isLoading: usdcLoading } = useBalance({
-    address,
-    token: TOKENS.USDC as `0x${string}`,
+  // USDC balance via ERC20 balanceOf
+  const { data: usdcBalanceRaw, isLoading: usdcLoading } = useReadContract({
+    address: TOKENS.USDC,
+    abi: erc20Abi,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
     chainId: base.id,
+    query: {
+      enabled: !!address,
+    },
   });
 
   const isLoading = ethLoading || usdcLoading;
 
   // Format for display
   const ethFormatted = ethBalance ? parseFloat(formatUnits(ethBalance.value, 18)).toFixed(4) : '0';
-  const usdcFormatted = usdcBalance ? parseFloat(formatUnits(usdcBalance.value, 6)).toFixed(2) : '0';
+  const usdcFormatted = usdcBalanceRaw ? parseFloat(formatUnits(usdcBalanceRaw as bigint, 6)).toFixed(2) : '0';
 
   return (
     <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">

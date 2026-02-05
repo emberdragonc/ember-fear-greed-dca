@@ -4,7 +4,7 @@
 import { useFearGreed } from '@/hooks/useFearGreed';
 
 export default function FearGreedGauge() {
-  const { data, isLoading, error } = useFearGreed();
+  const { data, loading: isLoading, error } = useFearGreed();
 
   if (isLoading) {
     return (
@@ -25,7 +25,7 @@ export default function FearGreedGauge() {
   }
 
   const value = data.value;
-  const classification = data.value_classification;
+  const classification = data.valueClassification;
   
   // Calculate needle rotation (-90 to 90 degrees)
   const rotation = (value / 100) * 180 - 90;

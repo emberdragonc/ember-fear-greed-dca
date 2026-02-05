@@ -65,7 +65,7 @@ export function useSwap() {
           to: approvalResult.approval.to,
           data: approvalResult.approval.data,
           value: BigInt(approvalResult.approval.value || '0'),
-        });
+        } as unknown as Parameters<typeof walletClient.sendTransaction>[0]);
         
         // Wait for approval to confirm
         await publicClient?.waitForTransactionReceipt({ hash: approvalHash });
@@ -96,7 +96,7 @@ export function useSwap() {
         data: swapTx.data,
         value: BigInt(swapTx.value || '0'),
         gas: swapTx.gasLimit ? BigInt(swapTx.gasLimit) : undefined,
-      });
+      } as unknown as Parameters<typeof walletClient.sendTransaction>[0]);
 
       setState(s => ({ 
         ...s, 

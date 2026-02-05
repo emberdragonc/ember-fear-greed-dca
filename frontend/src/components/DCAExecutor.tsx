@@ -2,12 +2,23 @@
 'use client';
 
 import { useState } from 'react';
-import { useAccount, useBalance } from 'wagmi';
+import { useAccount, useBalance, useReadContract } from 'wagmi';
 import { base } from 'wagmi/chains';
 import { formatUnits } from 'viem';
 import { useFearGreed } from '@/hooks/useFearGreed';
 import { useSwap } from '@/hooks/useSwap';
 import { TOKENS, FEE_BIPS } from '@/lib/swap';
+
+// ERC20 ABI for balanceOf
+const erc20Abi = [
+  {
+    name: 'balanceOf',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: 'balance', type: 'uint256' }],
+  },
+] as const;
 
 export function DCAExecutor() {
   const { address } = useAccount();
@@ -15,17 +26,25 @@ export function DCAExecutor() {
   const { status, txHash, error, executeSwap, reset } = useSwap();
   const [isExecuting, setIsExecuting] = useState(false);
 
-  // Get balances
+  // Get ETH balance
   const { data: ethBalance } = useBalance({
     address,
     chainId: base.id,
   });
 
-  const { data: usdcBalance } = useBalance({
-    address,
-    token: TOKENS.USDC as `0x${string}`,
+  // Get USDC balance via ERC20 balanceOf
+  const { data: usdcBalanceRaw } = useReadContract({
+    address: TOKENS.USDC,
+    abi: erc20Abi,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
     chainId: base.id,
+    query: {
+      enabled: !!address,
+    },
   });
+
+  const usdcBalance = usdcBalanceRaw ? { value: usdcBalanceRaw as bigint } : null;
 
   // Calculate amounts based on decision
   const calculateSwapAmount = () => {

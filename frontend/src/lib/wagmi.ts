@@ -8,7 +8,7 @@ const chainId = parseInt(process.env.NEXT_PUBLIC_CHAIN_ID || '8453');
 export const targetChain = chainId === 8453 ? base : baseSepolia;
 
 export const wagmiConfig = createConfig({
-  chains: [targetChain],
+  chains: [base, baseSepolia],
   connectors: [
     metaMask(),
     injected(),
@@ -17,7 +17,8 @@ export const wagmiConfig = createConfig({
     }),
   ],
   transports: {
-    [targetChain.id]: http(),
+    [base.id]: http(),
+    [baseSepolia.id]: http(),
   },
 });
 

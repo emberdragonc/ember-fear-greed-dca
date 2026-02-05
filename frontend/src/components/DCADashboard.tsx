@@ -71,7 +71,7 @@ export function DCADashboard({ balances, actionHistory = [] }: DCADashboardProps
           </div>
         ) : (
           <div className="flex flex-col items-center">
-            <FearGreedGauge value={data?.value ?? 50} />
+            <FearGreedGauge />
             
             {data && (
               <div className="mt-4 text-center">
