@@ -18,10 +18,10 @@ const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as Address;
 const DELEGATION_MANAGER = '0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3' as Address;
 
 // Lazy-loaded clients (initialized on first request to avoid build-time env issues)
-let _supabase: ReturnType<typeof createClient> | null = null;
-let _publicClient: ReturnType<typeof createPublicClient> | null = null;
-let _walletClient: ReturnType<typeof createWalletClient> | null = null;
-let _backendAccount: ReturnType<typeof privateKeyToAccount> | null = null;
+let _supabase: any = null;
+let _publicClient: any = null;
+let _walletClient: any = null;
+let _backendAccount: any = null;
 
 function getSupabase() {
   if (!_supabase) {
