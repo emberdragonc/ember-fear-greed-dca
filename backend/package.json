@@ -1,0 +1,17 @@
+{
+  "name": "fear-greed-dca-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "execute": "npx tsx dca-executor.ts",
+    "setup-db": "psql $DATABASE_URL -f schema.sql"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0"
+  }
+}
