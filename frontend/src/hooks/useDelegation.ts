@@ -154,18 +154,18 @@ export function useDelegation(): UseDelegationReturn {
     }
   };
 
-  // Remove delegation from Supabase
+  // Remove delegation from Supabase via API (uses service key for proper permissions)
   const removeDelegationFromDb = async (userAddress: string) => {
-    if (!supabase) return;
-
     try {
-      const { error } = await supabase
-        .from('delegations')
-        .delete()
-        .eq('user_address', userAddress.toLowerCase());
+      const response = await fetch(`/api/delegation?userAddress=${userAddress}`, {
+        method: 'DELETE',
+      });
 
-      if (error) {
-        console.error('Failed to remove delegation from DB:', error);
+      if (!response.ok) {
+        const result = await response.json();
+        console.error('Failed to remove delegation from DB:', result.error);
+      } else {
+        console.log('Delegation removed from database');
       }
     } catch (err) {
       console.error('Database error:', err);

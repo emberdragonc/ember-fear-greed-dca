@@ -73,6 +73,46 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// DELETE - remove delegation
+export async function DELETE(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const userAddress = searchParams.get('userAddress');
+
+    if (!userAddress) {
+      return NextResponse.json(
+        { error: 'Missing userAddress parameter' },
+        { status: 400 }
+      );
+    }
+
+    const { error } = await getSupabase()
+      .from('delegations')
+      .delete()
+      .eq('user_address', userAddress.toLowerCase());
+
+    if (error) {
+      console.error('Failed to delete delegation:', error);
+      return NextResponse.json(
+        { error: 'Failed to delete delegation: ' + error.message },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: 'Delegation deleted successfully',
+    });
+
+  } catch (error) {
+    console.error('Delegation delete error:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to delete delegation' },
+      { status: 500 }
+    );
+  }
+}
+
 // GET - check if delegation exists
 export async function GET(request: NextRequest) {
   try {
