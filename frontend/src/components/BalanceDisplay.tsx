@@ -7,7 +7,7 @@ import { base } from 'wagmi/chains';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { TOKENS } from '@/lib/swap';
 import { formatUnits, parseUnits, parseEther, encodeFunctionData, http } from 'viem';
-import { createBundlerClient } from 'viem/account-abstraction';
+import { createBundlerClient, createPaymasterClient } from 'viem/account-abstraction';
 
 // ERC20 ABI
 const erc20Abi = [
@@ -30,8 +30,9 @@ const erc20Abi = [
   },
 ] as const;
 
-// Pimlico bundler URL for Base (free tier)
-const BUNDLER_URL = 'https://public.pimlico.io/v2/8453/rpc';
+// Pimlico bundler URL for Base (with API key for paymaster sponsorship)
+const PIMLICO_API_KEY = process.env.NEXT_PUBLIC_PIMLICO_API_KEY || '';
+const BUNDLER_URL = `https://api.pimlico.io/v2/8453/rpc?apikey=${PIMLICO_API_KEY}`;
 
 export function BalanceDisplay() {
   const { address: eoaAddress } = useAccount();
@@ -114,10 +115,16 @@ export function BalanceDisplay() {
 
     setIsWithdrawing(true);
     try {
-      // Create bundler client for ERC-4337 user operations
+      // Create paymaster client for gas sponsorship
+      const paymasterClient = createPaymasterClient({
+        transport: http(BUNDLER_URL),
+      });
+
+      // Create bundler client for ERC-4337 user operations with paymaster
       const bundlerClient = createBundlerClient({
         chain: base,
         transport: http(BUNDLER_URL),
+        paymaster: paymasterClient,
       });
 
       // Withdraw FROM the smart account using bundler
