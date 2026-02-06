@@ -202,7 +202,8 @@ export function useDelegation(): UseDelegationReturn {
       
       // All targets the backend can interact with
       const allowedTargets = [
-        DELEGATION_ADDRESSES.UNISWAP_ROUTER, // Swap router
+        DELEGATION_ADDRESSES.UNISWAP_ROUTER, // Swap router (execute)
+        DELEGATION_ADDRESSES.PERMIT2,         // Permit2 (Universal Router uses this)
         DELEGATION_ADDRESSES.USDC,            // For approve()
         DELEGATION_ADDRESSES.WETH,            // For approve()
       ];
@@ -279,6 +280,7 @@ export function useDelegation(): UseDelegationReturn {
         caveats: {
           allowedTargets: [
             DELEGATION_ADDRESSES.UNISWAP_ROUTER,
+            DELEGATION_ADDRESSES.PERMIT2,
             DELEGATION_ADDRESSES.USDC,
             DELEGATION_ADDRESSES.WETH,
           ],

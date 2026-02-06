@@ -31,6 +31,8 @@ const ADDRESSES = {
   USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as Address,
   // Uniswap V4 Universal Router (used by Trading API)
   UNISWAP_ROUTER: '0x6fF5693b99212Da76ad316178A184AB56D299b43' as Address,
+  // Permit2 - Universal Router uses this for token transfers
+  PERMIT2: '0x000000000022D473030F116dDEE9F6B43aC78BA3' as Address,
   // MetaMask Delegation
   DELEGATION_MANAGER: '0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3' as Address,
   // EMBER Staking (fee recipient)
@@ -521,23 +523,23 @@ async function processUserDCA(
   console.log(`Swap: ${formatUnits(swapAmountAfterFee, isBuy ? 6 : 18)} ${isBuy ? 'USDC' : 'ETH'} -> ${isBuy ? 'ETH' : 'USDC'}`);
   console.log(`Fee: ${formatUnits(fee, isBuy ? 6 : 18)} ${isBuy ? 'USDC' : 'ETH'}`);
 
-  // Check if we need to approve the token for the router
+  // Check if we need to approve the token for Permit2 (Universal Router uses Permit2)
   const currentAllowance = await getTokenAllowance(
     tokenIn,
     smartAccountAddress,
-    ADDRESSES.UNISWAP_ROUTER
+    ADDRESSES.PERMIT2
   );
 
   if (currentAllowance < swapAmount) {
-    console.log(`Current allowance: ${formatUnits(currentAllowance, isBuy ? 6 : 18)}, need: ${formatUnits(swapAmount, isBuy ? 6 : 18)}`);
-    console.log('Executing delegated approval...');
+    console.log(`Current Permit2 allowance: ${formatUnits(currentAllowance, isBuy ? 6 : 18)}, need: ${formatUnits(swapAmount, isBuy ? 6 : 18)}`);
+    console.log('Executing delegated approval to Permit2...');
     
     // Approve max uint256 so we don't need to approve again
     const maxApproval = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
     const approvalTx = await executeDelegatedApproval(
       delegation,
       tokenIn,
-      ADDRESSES.UNISWAP_ROUTER,
+      ADDRESSES.PERMIT2,
       maxApproval
     );
 
@@ -545,14 +547,14 @@ async function processUserDCA(
       return {
         success: false,
         txHash: null,
-        error: 'Failed to approve token',
+        error: 'Failed to approve token for Permit2',
         amountIn: '0',
         amountOut: '0',
         feeCollected: '0',
       };
     }
   } else {
-    console.log('Token already approved ✓');
+    console.log('Token already approved for Permit2 ✓');
   }
 
   // Get swap quote (swapper is the smart account, not EOA)
