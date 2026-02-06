@@ -131,6 +131,9 @@ export function BalanceDisplay() {
         chain: base,
         transport: http(BUNDLER_URL),
         paymaster: pimlicoClient,
+        paymasterContext: {
+          sponsorshipPolicyId: 'sp_glamorous_leopardon',
+        },
       });
 
       // Withdraw FROM the smart account using bundler
