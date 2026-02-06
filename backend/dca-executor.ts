@@ -19,6 +19,130 @@ import { createClient } from '@supabase/supabase-js';
 import { createExecution, ExecutionMode } from '@metamask/smart-accounts-kit';
 import { DelegationManager } from '@metamask/smart-accounts-kit/contracts';
 
+// ============ RETRY & ERROR HANDLING UTILITIES ============
+
+// Sleep helper for delays
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Error types for classification
+type ErrorType = 'network' | 'revert' | 'timeout' | 'rate_limit' | 'quote_expired' | 'unknown';
+
+interface ClassifiedError {
+  type: ErrorType;
+  message: string;
+  originalError: unknown;
+  retryable: boolean;
+}
+
+function classifyError(error: unknown): ClassifiedError {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorString = errorMessage.toLowerCase();
+  
+  // Network errors (retryable)
+  if (errorString.includes('fetch') || 
+      errorString.includes('network') || 
+      errorString.includes('econnrefused') ||
+      errorString.includes('enotfound') ||
+      errorString.includes('socket') ||
+      errorString.includes('connection')) {
+    return { type: 'network', message: errorMessage, originalError: error, retryable: true };
+  }
+  
+  // Timeout errors (retryable)
+  if (errorString.includes('timeout') || errorString.includes('timed out')) {
+    return { type: 'timeout', message: errorMessage, originalError: error, retryable: true };
+  }
+  
+  // Rate limit errors (retryable with longer backoff)
+  if (errorString.includes('rate limit') || 
+      errorString.includes('429') || 
+      errorString.includes('too many requests')) {
+    return { type: 'rate_limit', message: errorMessage, originalError: error, retryable: true };
+  }
+  
+  // Quote expired (retryable - get fresh quote)
+  if (errorString.includes('quote') && 
+      (errorString.includes('expired') || errorString.includes('stale'))) {
+    return { type: 'quote_expired', message: errorMessage, originalError: error, retryable: true };
+  }
+  
+  // Revert errors (NOT retryable - will fail again)
+  if (errorString.includes('revert') || 
+      errorString.includes('execution reverted') ||
+      errorString.includes('insufficient') ||
+      errorString.includes('transfer amount exceeds')) {
+    return { type: 'revert', message: errorMessage, originalError: error, retryable: false };
+  }
+  
+  // Unknown errors - may be retryable
+  return { type: 'unknown', message: errorMessage, originalError: error, retryable: true };
+}
+
+// Retry configuration
+interface RetryConfig {
+  maxAttempts: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+  operation: string;
+}
+
+const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxAttempts: 3,
+  baseDelayMs: 1000,
+  maxDelayMs: 10000,
+  operation: 'unknown',
+};
+
+// Generic retry wrapper with exponential backoff
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  config: Partial<RetryConfig> = {}
+): Promise<{ result: T | null; error: ClassifiedError | null; attempts: number }> {
+  const { maxAttempts, baseDelayMs, maxDelayMs, operation } = { ...DEFAULT_RETRY_CONFIG, ...config };
+  
+  let lastError: ClassifiedError | null = null;
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const result = await fn();
+      if (attempt > 1) {
+        console.log(`[${operation}] Succeeded on attempt ${attempt}`);
+      }
+      return { result, error: null, attempts: attempt };
+    } catch (err) {
+      lastError = classifyError(err);
+      
+      console.error(`[${operation}] Attempt ${attempt}/${maxAttempts} failed:`, {
+        type: lastError.type,
+        message: lastError.message,
+        retryable: lastError.retryable,
+      });
+      
+      // Don't retry non-retryable errors
+      if (!lastError.retryable) {
+        console.log(`[${operation}] Error is not retryable, giving up`);
+        break;
+      }
+      
+      // Don't sleep after the last attempt
+      if (attempt < maxAttempts) {
+        // Exponential backoff: 1s, 2s, 4s... capped at maxDelayMs
+        const delay = Math.min(baseDelayMs * Math.pow(2, attempt - 1), maxDelayMs);
+        // Add jitter (±20%) to prevent thundering herd
+        const jitter = delay * 0.2 * (Math.random() - 0.5);
+        const actualDelay = Math.floor(delay + jitter);
+        
+        console.log(`[${operation}] Retrying in ${actualDelay}ms...`);
+        await sleep(actualDelay);
+      }
+    }
+  }
+  
+  return { result: null, error: lastError, attempts: maxAttempts };
+}
+
 // ============ CONFIG ============
 
 const CHAIN_ID = 8453;
@@ -75,9 +199,12 @@ interface ExecutionResult {
   success: boolean;
   txHash: string | null;
   error: string | null;
+  errorType: ErrorType | null;
   amountIn: string;
   amountOut: string;
   feeCollected: string;
+  retryCount: number;
+  lastError: string | null;
 }
 
 // ============ CLIENTS ============
@@ -133,13 +260,33 @@ const emberStakingAbi = [
 
 // ============ FEAR & GREED ============
 
-async function fetchFearGreed(): Promise<{ value: number; classification: string }> {
+async function fetchFearGreedInternal(): Promise<{ value: number; classification: string }> {
   const response = await fetch('https://api.alternative.me/fng/');
+  if (!response.ok) {
+    throw new Error(`F&G API returned ${response.status}: ${response.statusText}`);
+  }
   const data = await response.json();
+  if (!data.data?.[0]) {
+    throw new Error('Invalid F&G API response structure');
+  }
   return {
     value: parseInt(data.data[0].value),
     classification: data.data[0].value_classification,
   };
+}
+
+async function fetchFearGreed(): Promise<{ value: number; classification: string }> {
+  const { result, error, attempts } = await withRetry(
+    fetchFearGreedInternal,
+    { operation: 'fetchFearGreed' }
+  );
+  
+  if (!result) {
+    console.error(`Failed to fetch Fear & Greed after ${attempts} attempts:`, error?.message);
+    throw new Error(`Failed to fetch Fear & Greed: ${error?.message}`);
+  }
+  
+  return result;
 }
 
 function calculateDecision(fgValue: number): DCADecision {
@@ -371,66 +518,140 @@ function calculateAmountAfterFee(amount: bigint): bigint {
 
 // ============ SWAP EXECUTION ============
 
+async function getSwapQuoteInternal(
+  swapper: Address,
+  tokenIn: Address,
+  tokenOut: Address,
+  amount: string
+): Promise<{ quote: any; swap: any }> {
+  // Get quote
+  const quoteRes = await fetch(`${TRADING_API}/quote`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.UNISWAP_API_KEY!,
+    },
+    body: JSON.stringify({
+      swapper,
+      tokenIn,
+      tokenOut,
+      tokenInChainId: CHAIN_ID,
+      tokenOutChainId: CHAIN_ID,
+      amount,
+      type: 'EXACT_INPUT',
+      slippageTolerance: 1,
+    }),
+  });
+
+  if (!quoteRes.ok) {
+    const error = await quoteRes.json().catch(() => ({ error: 'Unknown error' }));
+    const errorMsg = error.errorCode || error.error || error.message || `HTTP ${quoteRes.status}`;
+    throw new Error(`Quote API failed: ${errorMsg}`);
+  }
+
+  const quoteData = await quoteRes.json();
+
+  // Get swap transaction
+  const { permitData, permitTransaction, ...cleanQuote } = quoteData;
+  const swapRes = await fetch(`${TRADING_API}/swap`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.UNISWAP_API_KEY!,
+    },
+    body: JSON.stringify(cleanQuote),
+  });
+
+  if (!swapRes.ok) {
+    const error = await swapRes.json().catch(() => ({ error: 'Unknown error' }));
+    const errorMsg = error.errorCode || error.error || error.message || `HTTP ${swapRes.status}`;
+    throw new Error(`Swap API failed: ${errorMsg}`);
+  }
+
+  const swapData = await swapRes.json();
+  return { quote: quoteData, swap: swapData.swap };
+}
+
 async function getSwapQuote(
   swapper: Address,
   tokenIn: Address,
   tokenOut: Address,
   amount: string
-): Promise<{ quote: any; swap: any } | null> {
-  try {
-    // Get quote
-    const quoteRes = await fetch(`${TRADING_API}/quote`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.UNISWAP_API_KEY!,
-      },
-      body: JSON.stringify({
-        swapper,
-        tokenIn,
-        tokenOut,
-        tokenInChainId: CHAIN_ID,
-        tokenOutChainId: CHAIN_ID,
-        amount,
-        type: 'EXACT_INPUT',
-        slippageTolerance: 1,
-      }),
-    });
-
-    if (!quoteRes.ok) {
-      const error = await quoteRes.json();
-      console.error('Quote failed:', error);
-      return null;
-    }
-
-    const quoteData = await quoteRes.json();
-
-    // Get swap transaction
-    const { permitData, permitTransaction, ...cleanQuote } = quoteData;
-    const swapRes = await fetch(`${TRADING_API}/swap`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.UNISWAP_API_KEY!,
-      },
-      body: JSON.stringify(cleanQuote),
-    });
-
-    if (!swapRes.ok) {
-      const error = await swapRes.json();
-      console.error('Swap request failed:', error);
-      return null;
-    }
-
-    const swapData = await swapRes.json();
-    return { quote: quoteData, swap: swapData.swap };
-  } catch (error) {
-    console.error('Swap quote error:', error);
+): Promise<{ quote: any; swap: any; retryInfo: { attempts: number; lastError: string | null } } | null> {
+  const { result, error, attempts } = await withRetry(
+    () => getSwapQuoteInternal(swapper, tokenIn, tokenOut, amount),
+    { operation: 'getSwapQuote' }
+  );
+  
+  if (!result) {
+    console.error(`Failed to get swap quote after ${attempts} attempts:`, error?.message);
     return null;
   }
+  
+  return { ...result, retryInfo: { attempts, lastError: error?.message ?? null } };
 }
 
 // ============ DELEGATION EXECUTION ============
+
+async function executeDelegatedSwapInternal(
+  delegation: DelegationRecord,
+  direction: 'buy' | 'sell',
+  swapTo: Address,
+  swapData: Hex,
+  swapValue: bigint
+): Promise<string> {
+  // Parse the stored delegation data (handle both string and object)
+  const signedDelegation = typeof delegation.delegation_data === 'string' 
+    ? JSON.parse(delegation.delegation_data) 
+    : delegation.delegation_data;
+  
+  // Validate the signed delegation has the required fields
+  if (!signedDelegation.signature) {
+    throw new Error('Delegation missing signature');
+  }
+
+  // Create the execution struct using the SDK
+  const execution = createExecution({
+    target: swapTo,
+    value: swapValue,
+    callData: swapData,
+  });
+
+  // Encode the redeemDelegations call using the SDK
+  const redeemCalldata = DelegationManager.encode.redeemDelegations({
+    delegations: [[signedDelegation]],
+    modes: [ExecutionMode.SingleDefault],
+    executions: [[execution]],
+  });
+
+  console.log(`[executeDelegatedSwap] Sending transaction to DelegationManager...`);
+  console.log(`  Target: ${swapTo}`);
+  console.log(`  Value: ${swapValue.toString()}`);
+  console.log(`  Direction: ${direction}`);
+
+  // Send transaction via backend wallet (EOA redemption)
+  const redeemTx = await walletClient.sendTransaction({
+    to: ADDRESSES.DELEGATION_MANAGER,
+    data: redeemCalldata,
+    gas: 500000n,
+  });
+
+  console.log(`[executeDelegatedSwap] Transaction sent: ${redeemTx}`);
+  console.log(`[executeDelegatedSwap] Waiting for confirmation...`);
+
+  // Wait for confirmation
+  const receipt = await publicClient.waitForTransactionReceipt({ 
+    hash: redeemTx,
+    timeout: 60000,
+  });
+
+  if (receipt.status === 'success') {
+    console.log(`[executeDelegatedSwap] Transaction confirmed in block ${receipt.blockNumber}`);
+    return redeemTx;
+  } else {
+    throw new Error(`Transaction reverted: ${redeemTx}`);
+  }
+}
 
 async function executeDelegatedSwap(
   delegation: DelegationRecord,
@@ -438,56 +659,17 @@ async function executeDelegatedSwap(
   swapTo: Address,
   swapData: Hex,
   swapValue: bigint
-): Promise<string | null> {
-  try {
-    // Parse the stored delegation data (handle both string and object)
-    const signedDelegation = typeof delegation.delegation_data === 'string' 
-      ? JSON.parse(delegation.delegation_data) 
-      : delegation.delegation_data;
-    
-    // Validate the signed delegation has the required fields
-    if (!signedDelegation.signature) {
-      console.error('Delegation missing signature');
-      return null;
-    }
-
-    // Create the execution struct using the SDK
-    const execution = createExecution({
-      target: swapTo,
-      value: swapValue,
-      callData: swapData,
-    });
-
-    // Encode the redeemDelegations call using the SDK
-    const redeemCalldata = DelegationManager.encode.redeemDelegations({
-      delegations: [[signedDelegation]],
-      modes: [ExecutionMode.SingleDefault],
-      executions: [[execution]],
-    });
-
-    // Send transaction via backend wallet (EOA redemption)
-    const redeemTx = await walletClient.sendTransaction({
-      to: ADDRESSES.DELEGATION_MANAGER,
-      data: redeemCalldata,
-      gas: 500000n,
-    });
-
-    // Wait for confirmation
-    const receipt = await publicClient.waitForTransactionReceipt({ 
-      hash: redeemTx,
-      timeout: 60000,
-    });
-
-    if (receipt.status === 'success') {
-      return redeemTx;
-    } else {
-      console.error('Transaction reverted');
-      return null;
-    }
-  } catch (error) {
-    console.error('Delegation execution error:', error);
-    return null;
+): Promise<{ txHash: string | null; retryInfo: { attempts: number; lastError: ClassifiedError | null } }> {
+  const { result, error, attempts } = await withRetry(
+    () => executeDelegatedSwapInternal(delegation, direction, swapTo, swapData, swapValue),
+    { operation: 'executeDelegatedSwap', maxAttempts: 3, baseDelayMs: 2000 }
+  );
+  
+  if (!result) {
+    console.error(`Failed to execute delegated swap after ${attempts} attempts:`, error?.message);
   }
+  
+  return { txHash: result, retryInfo: { attempts, lastError: error } };
 }
 
 // ============ FEE COLLECTION ============
@@ -632,11 +814,59 @@ async function logExecution(
     tx_hash: result.txHash,
     status: result.success ? 'success' : 'failed',
     error_message: result.error,
+    error_type: result.errorType,
+    retry_count: result.retryCount,
+    last_error: result.lastError,
     created_at: new Date().toISOString(),
   });
 
   if (error) {
     console.error('Failed to log execution:', error);
+    // Log full details so failures can be debugged even if DB insert fails
+    console.log('Execution details for manual debugging:', JSON.stringify({
+      delegationId,
+      userAddress,
+      fgValue,
+      decision,
+      result,
+    }, null, 2));
+  }
+}
+
+// Log a failed attempt for debugging/manual retry
+async function logFailedAttempt(
+  delegationId: string,
+  userAddress: string,
+  stage: string,
+  errorInfo: ClassifiedError,
+  context: Record<string, unknown>
+) {
+  console.error(`[FAILED] ${stage} for ${userAddress}:`, {
+    errorType: errorInfo.type,
+    message: errorInfo.message,
+    retryable: errorInfo.retryable,
+    context,
+  });
+
+  // Store in Supabase for tracking (best effort - table may not exist)
+  try {
+    const { error } = await supabase.from('dca_failed_attempts').insert({
+      delegation_id: delegationId,
+      user_address: userAddress,
+      stage,
+      error_type: errorInfo.type,
+      error_message: errorInfo.message,
+      retryable: errorInfo.retryable,
+      context: JSON.stringify(context),
+      created_at: new Date().toISOString(),
+    });
+
+    if (error) {
+      // Table might not exist yet - that's OK, we logged to console
+      console.log('Note: dca_failed_attempts table may need to be created');
+    }
+  } catch {
+    console.log('Note: Failed to insert into dca_failed_attempts table');
   }
 }
 
@@ -664,28 +894,79 @@ async function processUserDCA(
   
   console.log(`\n--- Processing: ${userAddress} ---`);
   console.log(`Smart Account: ${smartAccountAddress}`);
+  console.log(`Timestamp: ${new Date().toISOString()}`);
+
+  // Track retry information across stages
+  let totalRetries = 0;
+  let lastErrorMessage: string | null = null;
+  let lastErrorType: ErrorType | null = null;
 
   // Determine swap direction and get balance
   const isBuy = decision.action === 'buy';
   const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH;
   const tokenOut = isBuy ? ADDRESSES.WETH : ADDRESSES.USDC;
+  const tokenDecimals = isBuy ? 6 : 18;
+  const tokenSymbol = isBuy ? 'USDC' : 'ETH';
   
-  // Get balance from SMART ACCOUNT (not EOA)
-  const balance = isBuy 
-    ? await getUSDCBalance(smartAccountAddress)
-    : await getETHBalance(smartAccountAddress);
+  // Get balance from SMART ACCOUNT (not EOA) with retry
+  let balance: bigint;
+  try {
+    const { result: balanceResult, error: balanceError, attempts } = await withRetry(
+      async () => isBuy 
+        ? await getUSDCBalance(smartAccountAddress)
+        : await getETHBalance(smartAccountAddress),
+      { operation: 'getBalance' }
+    );
+    totalRetries += attempts - 1;
+    
+    if (balanceResult === null) {
+      lastErrorMessage = balanceError?.message ?? 'Failed to fetch balance';
+      lastErrorType = balanceError?.type ?? 'unknown';
+      await logFailedAttempt(delegation.id, userAddress, 'getBalance', balanceError!, { smartAccountAddress, tokenIn });
+      return {
+        success: false,
+        txHash: null,
+        error: lastErrorMessage,
+        errorType: lastErrorType,
+        amountIn: '0',
+        amountOut: '0',
+        feeCollected: '0',
+        retryCount: totalRetries,
+        lastError: lastErrorMessage,
+      };
+    }
+    balance = balanceResult;
+  } catch (err) {
+    const classified = classifyError(err);
+    return {
+      success: false,
+      txHash: null,
+      error: classified.message,
+      errorType: classified.type,
+      amountIn: '0',
+      amountOut: '0',
+      feeCollected: '0',
+      retryCount: totalRetries,
+      lastError: classified.message,
+    };
+  }
 
   if (balance === 0n) {
-    console.log(`No ${isBuy ? 'USDC' : 'ETH'} balance, skipping`);
+    console.log(`No ${tokenSymbol} balance, skipping`);
     return {
       success: false,
       txHash: null,
       error: 'Insufficient balance',
+      errorType: null,
       amountIn: '0',
       amountOut: '0',
       feeCollected: '0',
+      retryCount: 0,
+      lastError: null,
     };
   }
+
+  console.log(`Balance: ${formatUnits(balance, tokenDecimals)} ${tokenSymbol}`);
 
   // Calculate swap amount (percentage of balance)
   const percentage = BigInt(Math.floor(decision.percentage * 100));
@@ -695,25 +976,41 @@ async function processUserDCA(
   const maxAmount = BigInt(delegation.max_amount_per_swap);
   if (swapAmount > maxAmount) {
     swapAmount = maxAmount;
-    console.log(`Capped to max amount: ${formatUnits(maxAmount, isBuy ? 6 : 18)}`);
+    console.log(`Capped to max amount: ${formatUnits(maxAmount, tokenDecimals)}`);
   }
 
   // Calculate fee (taken from input)
   const fee = calculateFee(swapAmount);
   const swapAmountAfterFee = swapAmount - fee;
 
-  console.log(`Swap: ${formatUnits(swapAmountAfterFee, isBuy ? 6 : 18)} ${isBuy ? 'USDC' : 'ETH'} -> ${isBuy ? 'ETH' : 'USDC'}`);
-  console.log(`Fee: ${formatUnits(fee, isBuy ? 6 : 18)} ${isBuy ? 'USDC' : 'ETH'}`);
+  console.log(`Swap: ${formatUnits(swapAmountAfterFee, tokenDecimals)} ${tokenSymbol} -> ${isBuy ? 'ETH' : 'USDC'}`);
+  console.log(`Fee: ${formatUnits(fee, tokenDecimals)} ${tokenSymbol}`);
 
   // STEP 1: Check ERC20 approve to Permit2 contract
-  const erc20Allowance = await getTokenAllowance(
-    tokenIn,
-    smartAccountAddress,
-    ADDRESSES.PERMIT2
+  const { result: erc20Allowance, error: allowanceError } = await withRetry(
+    () => getTokenAllowance(tokenIn, smartAccountAddress, ADDRESSES.PERMIT2),
+    { operation: 'getERC20Allowance' }
   );
 
+  if (erc20Allowance === null) {
+    lastErrorMessage = allowanceError?.message ?? 'Failed to check allowance';
+    lastErrorType = allowanceError?.type ?? 'unknown';
+    await logFailedAttempt(delegation.id, userAddress, 'getERC20Allowance', allowanceError!, { tokenIn, smartAccountAddress });
+    return {
+      success: false,
+      txHash: null,
+      error: lastErrorMessage,
+      errorType: lastErrorType,
+      amountIn: '0',
+      amountOut: '0',
+      feeCollected: '0',
+      retryCount: totalRetries,
+      lastError: lastErrorMessage,
+    };
+  }
+
   if (erc20Allowance < swapAmount) {
-    console.log(`ERC20 allowance to Permit2: ${formatUnits(erc20Allowance, isBuy ? 6 : 18)}, need: ${formatUnits(swapAmount, isBuy ? 6 : 18)}`);
+    console.log(`ERC20 allowance to Permit2: ${formatUnits(erc20Allowance, tokenDecimals)}, need: ${formatUnits(swapAmount, tokenDecimals)}`);
     console.log('Executing ERC20 approve to Permit2...');
     
     const maxApproval = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
@@ -725,13 +1022,22 @@ async function processUserDCA(
     );
 
     if (!erc20ApproveTx) {
+      lastErrorMessage = 'Failed to ERC20 approve token for Permit2';
+      lastErrorType = 'revert';
+      await logFailedAttempt(delegation.id, userAddress, 'erc20Approval', 
+        { type: 'revert', message: lastErrorMessage, originalError: null, retryable: false },
+        { tokenIn, spender: ADDRESSES.PERMIT2 }
+      );
       return {
         success: false,
         txHash: null,
-        error: 'Failed to ERC20 approve token for Permit2',
+        error: lastErrorMessage,
+        errorType: lastErrorType,
         amountIn: '0',
         amountOut: '0',
         feeCollected: '0',
+        retryCount: totalRetries,
+        lastError: lastErrorMessage,
       };
     }
   } else {
@@ -739,15 +1045,31 @@ async function processUserDCA(
   }
 
   // STEP 2: Check Permit2 internal allowance to Universal Router
-  const permit2Allowance = await getPermit2Allowance(
-    smartAccountAddress,
-    tokenIn,
-    ADDRESSES.UNISWAP_ROUTER
+  const { result: permit2Allowance, error: permit2AllowanceError } = await withRetry(
+    () => getPermit2Allowance(smartAccountAddress, tokenIn, ADDRESSES.UNISWAP_ROUTER),
+    { operation: 'getPermit2Allowance' }
   );
-  const now = Math.floor(Date.now() / 1000);
 
+  if (permit2Allowance === null) {
+    lastErrorMessage = permit2AllowanceError?.message ?? 'Failed to check Permit2 allowance';
+    lastErrorType = permit2AllowanceError?.type ?? 'unknown';
+    await logFailedAttempt(delegation.id, userAddress, 'getPermit2Allowance', permit2AllowanceError!, { tokenIn, smartAccountAddress });
+    return {
+      success: false,
+      txHash: null,
+      error: lastErrorMessage,
+      errorType: lastErrorType,
+      amountIn: '0',
+      amountOut: '0',
+      feeCollected: '0',
+      retryCount: totalRetries,
+      lastError: lastErrorMessage,
+    };
+  }
+
+  const now = Math.floor(Date.now() / 1000);
   if (permit2Allowance.amount < swapAmount || permit2Allowance.expiration < now) {
-    console.log(`Permit2 allowance: ${formatUnits(permit2Allowance.amount, isBuy ? 6 : 18)}, exp: ${permit2Allowance.expiration}`);
+    console.log(`Permit2 allowance: ${formatUnits(permit2Allowance.amount, tokenDecimals)}, exp: ${permit2Allowance.expiration}`);
     console.log('Executing Permit2 internal approve...');
     
     const permit2ApproveTx = await executeDelegatedPermit2Approval(
@@ -757,13 +1079,22 @@ async function processUserDCA(
     );
 
     if (!permit2ApproveTx) {
+      lastErrorMessage = 'Failed to set Permit2 internal allowance';
+      lastErrorType = 'revert';
+      await logFailedAttempt(delegation.id, userAddress, 'permit2Approval', 
+        { type: 'revert', message: lastErrorMessage, originalError: null, retryable: false },
+        { tokenIn, spender: ADDRESSES.UNISWAP_ROUTER }
+      );
       return {
         success: false,
         txHash: null,
-        error: 'Failed to set Permit2 internal allowance',
+        error: lastErrorMessage,
+        errorType: lastErrorType,
         amountIn: '0',
         amountOut: '0',
         feeCollected: '0',
+        retryCount: totalRetries,
+        lastError: lastErrorMessage,
       };
     }
   } else {
@@ -771,6 +1102,7 @@ async function processUserDCA(
   }
 
   // Get swap quote (swapper is the smart account, not EOA)
+  console.log('Getting swap quote from Uniswap API...');
   const swapQuote = await getSwapQuote(
     smartAccountAddress,
     tokenIn,
@@ -779,18 +1111,31 @@ async function processUserDCA(
   );
 
   if (!swapQuote) {
+    lastErrorMessage = 'Failed to get swap quote after retries';
+    lastErrorType = 'network';
+    await logFailedAttempt(delegation.id, userAddress, 'getSwapQuote', 
+      { type: 'network', message: lastErrorMessage, originalError: null, retryable: true },
+      { tokenIn, tokenOut, amount: swapAmountAfterFee.toString() }
+    );
     return {
       success: false,
       txHash: null,
-      error: 'Failed to get swap quote',
+      error: lastErrorMessage,
+      errorType: lastErrorType,
       amountIn: swapAmountAfterFee.toString(),
       amountOut: '0',
       feeCollected: '0',
+      retryCount: totalRetries + 3, // Max attempts from getSwapQuote
+      lastError: lastErrorMessage,
     };
   }
 
+  totalRetries += swapQuote.retryInfo.attempts - 1;
+  console.log(`Quote received: ${formatUnits(BigInt(swapQuote.quote.quote.output.amount), isBuy ? 18 : 6)} ${isBuy ? 'ETH' : 'USDC'}`);
+
   // Execute the delegated swap
-  const txHash = await executeDelegatedSwap(
+  console.log('Executing delegated swap...');
+  const swapResult = await executeDelegatedSwap(
     delegation,
     decision.action as 'buy' | 'sell',
     swapQuote.swap.to as Address,
@@ -798,28 +1143,48 @@ async function processUserDCA(
     BigInt(swapQuote.swap.value || '0')
   );
 
-  if (!txHash) {
+  totalRetries += swapResult.retryInfo.attempts - 1;
+
+  if (!swapResult.txHash) {
+    lastErrorMessage = swapResult.retryInfo.lastError?.message ?? 'Swap execution failed';
+    lastErrorType = swapResult.retryInfo.lastError?.type ?? 'unknown';
+    await logFailedAttempt(delegation.id, userAddress, 'executeDelegatedSwap', 
+      swapResult.retryInfo.lastError ?? { type: 'unknown', message: lastErrorMessage, originalError: null, retryable: false },
+      { 
+        swapTo: swapQuote.swap.to, 
+        swapValue: swapQuote.swap.value,
+        amountIn: swapAmountAfterFee.toString(),
+        expectedOut: swapQuote.quote.quote.output.amount,
+      }
+    );
     return {
       success: false,
       txHash: null,
-      error: 'Swap execution failed',
+      error: lastErrorMessage,
+      errorType: lastErrorType,
       amountIn: swapAmountAfterFee.toString(),
       amountOut: swapQuote.quote.quote.output.amount,
       feeCollected: '0',
+      retryCount: totalRetries,
+      lastError: lastErrorMessage,
     };
   }
 
   // Fee collection disabled for launch - swaps work, fees can be added later
   // await collectFee(delegation, tokenIn, fee);
-  console.log(`Fee skipped for now: ${formatUnits(fee, tokenIn === ADDRESSES.USDC ? 6 : 18)} ${tokenIn === ADDRESSES.USDC ? 'USDC' : 'ETH'}`);
+  console.log(`Fee skipped for now: ${formatUnits(fee, tokenDecimals)} ${tokenSymbol}`);
+  console.log(`✓ Swap successful! TX: ${swapResult.txHash}`);
 
   return {
     success: true,
-    txHash,
+    txHash: swapResult.txHash,
     error: null,
+    errorType: null,
     amountIn: swapAmountAfterFee.toString(),
     amountOut: swapQuote.quote.quote.output.amount,
     feeCollected: fee.toString(),
+    retryCount: totalRetries,
+    lastError: null,
   };
 }
 
