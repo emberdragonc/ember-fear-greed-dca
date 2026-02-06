@@ -220,7 +220,9 @@ export function useDelegation(): UseDelegationReturn {
           type: 'functionCall',
           targets: allowedTargets,
           selectors: [
-            // Uniswap swap functions
+            // Uniswap V4 Universal Router execute function
+            'execute(bytes,bytes[],uint256)',
+            // Legacy V3 swap functions (backup)
             'exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))',
             'exactOutputSingle((address,address,uint24,address,uint256,uint256,uint160))',
             // ERC20 approve (for USDC/WETH -> Router)
@@ -281,6 +283,7 @@ export function useDelegation(): UseDelegationReturn {
             DELEGATION_ADDRESSES.WETH,
           ],
           allowedMethods: [
+            'execute(bytes,bytes[],uint256)',
             'exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))',
             'exactOutputSingle((address,address,uint24,address,uint256,uint256,uint160))',
             'approve(address,uint256)',

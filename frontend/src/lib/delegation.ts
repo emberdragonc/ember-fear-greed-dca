@@ -4,8 +4,10 @@ import { swapRouter02Abi } from '@/lib/abis';
 
 // Contract addresses (Base Mainnet)
 export const DELEGATION_ADDRESSES = {
-  // Uniswap V3 SwapRouter02
-  UNISWAP_ROUTER: '0x2626664c2603336E57B271c5C0b26F421741e481' as Address,
+  // Uniswap V3 SwapRouter02 (legacy)
+  UNISWAP_ROUTER_V3: '0x2626664c2603336E57B271c5C0b26F421741e481' as Address,
+  // Uniswap V4 Universal Router (used by Trading API)
+  UNISWAP_ROUTER: '0x6fF5693b99212Da76ad316178A184AB56D299b43' as Address,
   // USDC on Base
   USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as Address,
   // WETH on Base
