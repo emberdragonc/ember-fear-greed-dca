@@ -482,8 +482,8 @@ async function executeDelegatedERC20ApprovalViaUserOp(
 
     const nonce = encodeNonce({ key: nonceKey, sequence: 0n });
 
-    // Prepare the UserOperation
-    const preparedUserOp = await bundlerClient.prepareUserOperation({
+    // Submit UserOperation with Pimlico paymaster sponsorship
+    const userOpHash = await bundlerClient.sendUserOperation({
       account: backendSmartAccount,
       nonce,
       calls: [{
@@ -491,20 +491,10 @@ async function executeDelegatedERC20ApprovalViaUserOp(
         data: redeemCalldata,
         value: 0n,
       }],
-    });
-
-    // Get gas sponsorship from Pimlico paymaster
-    const sponsoredUserOp = await pimlicoPaymasterClient.sponsorUserOperation({
-      userOperation: preparedUserOp as UserOperation,
+      paymaster: pimlicoPaymasterClient,
     });
 
     console.log(`[UserOp] Gas sponsored by Pimlico paymaster`);
-
-    // Submit the sponsored UserOperation
-    const userOpHash = await bundlerClient.sendUserOperation({
-      account: backendSmartAccount,
-      ...sponsoredUserOp,
-    });
 
     console.log(`[UserOp] Submitted: ${userOpHash}`);
 
@@ -573,8 +563,8 @@ async function executeDelegatedPermit2ApprovalViaUserOp(
 
     const nonce = encodeNonce({ key: nonceKey, sequence: 0n });
 
-    // Prepare the UserOperation
-    const preparedUserOp = await bundlerClient.prepareUserOperation({
+    // Submit UserOperation with Pimlico paymaster sponsorship
+    const userOpHash = await bundlerClient.sendUserOperation({
       account: backendSmartAccount,
       nonce,
       calls: [{
@@ -582,22 +572,10 @@ async function executeDelegatedPermit2ApprovalViaUserOp(
         data: redeemCalldata,
         value: 0n,
       }],
+      paymaster: pimlicoPaymasterClient,
     });
 
-    // Get gas sponsorship from Pimlico paymaster
-    const sponsoredUserOp = await pimlicoPaymasterClient.sponsorUserOperation({
-      userOperation: preparedUserOp as UserOperation,
-    });
-
-    console.log(`[UserOp] Gas sponsored by Pimlico paymaster`);
-
-    // Submit the sponsored UserOperation
-    const userOpHash = await bundlerClient.sendUserOperation({
-      account: backendSmartAccount,
-      ...sponsoredUserOp,
-    });
-
-    console.log(`[UserOp] Submitted: ${userOpHash}`);
+    console.log(`[UserOp] Submitted with Pimlico paymaster: ${userOpHash}`);
 
     const receipt = await bundlerClient.waitForUserOperationReceipt({
       hash: userOpHash,
@@ -881,8 +859,9 @@ async function executeDelegatedSwapViaUserOp(
   // Encode nonce with parallel key
   const nonce = encodeNonce({ key: nonceKey, sequence: 0n });
 
-  // Prepare the UserOperation
-  const preparedUserOp = await bundlerClient.prepareUserOperation({
+  // Submit UserOperation with Pimlico paymaster sponsorship
+  const startTime = Date.now();
+  const userOpHash = await bundlerClient.sendUserOperation({
     account: backendSmartAccount,
     nonce,
     calls: [{
@@ -890,22 +869,11 @@ async function executeDelegatedSwapViaUserOp(
       data: redeemCalldata,
       value: 0n,
     }],
-  });
-
-  // Get gas sponsorship from Pimlico paymaster
-  const sponsoredUserOp = await pimlicoPaymasterClient.sponsorUserOperation({
-    userOperation: preparedUserOp as UserOperation,
-  });
-
-  console.log(`[UserOp] Gas sponsored by Pimlico paymaster`);
-
-  // Submit the sponsored UserOperation
-  const startTime = Date.now();
-  const userOpHash = await bundlerClient.sendUserOperation({
-    account: backendSmartAccount,
-    ...sponsoredUserOp,
+    paymaster: pimlicoPaymasterClient,
   });
   const submitTime = Date.now() - startTime;
+
+  console.log(`[UserOp] Gas sponsored by Pimlico paymaster`);
 
   console.log(`[UserOp] Submitted in ${submitTime}ms: ${userOpHash}`);
   console.log(`[UserOp] Waiting for confirmation...`);

@@ -19,9 +19,10 @@ import {
   type DelegationStatus,
 } from '@/lib/delegation';
 
-// Backend signer address (the delegate that will execute swaps)
+// Backend smart account address (the delegate that will execute swaps via ERC-4337)
+// This is the MetaMask smart account controlled by our backend EOA
 const BACKEND_SIGNER = (process.env.NEXT_PUBLIC_BACKEND_SIGNER || 
-  '0x9f2840DB6c36836cB7Ae342a79C762c657985dd0') as Address;
+  '0xc472e866045d2e9ABd2F2459cE3BDB275b72C7e1') as Address;
 
 interface DelegationState {
   status: 'idle' | 'loading' | 'created' | 'signed' | 'error';
