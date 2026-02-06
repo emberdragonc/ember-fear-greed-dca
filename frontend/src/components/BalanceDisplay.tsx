@@ -167,7 +167,7 @@ export function BalanceDisplay() {
       }
 
       // Send transaction through smart account client (handles sponsorship automatically)
-      const txHash = await smartAccountClient.sendTransaction(txParams);
+      const txHash = await smartAccountClient.sendTransaction(txParams as any);
       
       console.log('Withdrawal tx:', txHash);
       
