@@ -1214,7 +1214,105 @@ async function checkPermit2Allowance(smartAccountAddress: Address): Promise<bool
   }
 }
 
-// ============ PHASE 1: APPROVALS (Sequential - nonce sensitive) ============
+// ============ PHASE 1: APPROVALS (Parallel UserOps with unique nonce keys) ============
+
+interface ApprovalTask {
+  delegation: DelegationRecord;
+  smartAccountAddress: Address;
+  needsERC20: boolean;
+  needsPermit2: boolean;
+}
+
+interface ApprovalResult {
+  wallet: string;
+  success: boolean;
+  erc20TxHash: string | null;
+  permit2TxHash: string | null;
+  error?: string;
+}
+
+async function submitApprovalUserOps(
+  task: ApprovalTask,
+  tokenIn: Address,
+  nonceKeyBase: bigint
+): Promise<ApprovalResult> {
+  const { delegation, smartAccountAddress, needsERC20, needsPermit2 } = task;
+  
+  try {
+    let erc20TxHash: string | null = null;
+    let permit2TxHash: string | null = null;
+    
+    // Submit ERC20 approval if needed
+    if (needsERC20) {
+      const maxApproval = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
+      const erc20NonceKey = nonceKeyBase; // First nonce key for this wallet
+      
+      console.log(`[Approval] Submitting ERC20 approval for ${smartAccountAddress} (nonce key: ${erc20NonceKey})`);
+      
+      erc20TxHash = await executeDelegatedERC20ApprovalViaUserOp(
+        delegation,
+        tokenIn,
+        ADDRESSES.PERMIT2,
+        maxApproval,
+        erc20NonceKey
+      );
+      
+      if (!erc20TxHash) {
+        return {
+          wallet: smartAccountAddress,
+          success: false,
+          erc20TxHash: null,
+          permit2TxHash: null,
+          error: 'ERC20 approval failed',
+        };
+      }
+      
+      console.log(`[Approval] ✅ ERC20 approval success for ${smartAccountAddress}: ${erc20TxHash}`);
+    }
+    
+    // Submit Permit2 approval if needed
+    if (needsPermit2) {
+      const permit2NonceKey = nonceKeyBase + 1n; // Second nonce key for this wallet
+      
+      console.log(`[Approval] Submitting Permit2 approval for ${smartAccountAddress} (nonce key: ${permit2NonceKey})`);
+      
+      permit2TxHash = await executeDelegatedPermit2ApprovalViaUserOp(
+        delegation,
+        tokenIn,
+        ADDRESSES.UNISWAP_ROUTER,
+        permit2NonceKey
+      );
+      
+      if (!permit2TxHash) {
+        return {
+          wallet: smartAccountAddress,
+          success: false,
+          erc20TxHash,
+          permit2TxHash: null,
+          error: 'Permit2 approval failed',
+        };
+      }
+      
+      console.log(`[Approval] ✅ Permit2 approval success for ${smartAccountAddress}: ${permit2TxHash}`);
+    }
+    
+    return {
+      wallet: smartAccountAddress,
+      success: true,
+      erc20TxHash,
+      permit2TxHash,
+    };
+  } catch (error: any) {
+    console.error(`[Approval] ❌ Failed for ${smartAccountAddress}:`, error?.message || error);
+    return {
+      wallet: smartAccountAddress,
+      success: false,
+      erc20TxHash: null,
+      permit2TxHash: null,
+      error: error?.message || 'Unknown error',
+    };
+  }
+}
 
 async function processApprovals(delegations: DelegationRecord[], isBuy: boolean): Promise<void> {
   const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH;
@@ -1222,33 +1320,47 @@ async function processApprovals(delegations: DelegationRecord[], isBuy: boolean)
   
   console.log(`\n[Phase 1] Scanning ${delegations.length} wallets for approval needs...`);
   
-  interface ApprovalNeeds {
-    delegation: DelegationRecord;
-    smartAccountAddress: Address;
-    needsERC20: boolean;
-    needsPermit2: boolean;
-  }
+  // Initialize backend smart account (needed for UserOps)
+  await initBackendSmartAccount();
   
-  const needsApproval: ApprovalNeeds[] = [];
+  const needsApproval: ApprovalTask[] = [];
   
-  // Parallel check for approval status (read-only)
-  await Promise.all(delegations.map(async (delegation) => {
-    const smartAccountAddress = delegation.smart_account_address as Address;
-    
-    const [hasERC20Approval, hasPermit2Approval] = await Promise.all([
-      checkUSDCApproval(smartAccountAddress),
-      checkPermit2Allowance(smartAccountAddress),
-    ]);
-    
-    if (!hasERC20Approval || !hasPermit2Approval) {
-      needsApproval.push({
-        delegation,
-        smartAccountAddress,
-        needsERC20: !hasERC20Approval,
-        needsPermit2: !hasPermit2Approval,
-      });
+  // Parallel check for approval status (read-only via Alchemy)
+  const approvalChecks = await Promise.all(
+    delegations.map(async (delegation) => {
+      const smartAccountAddress = delegation.smart_account_address as Address;
+      
+      try {
+        const [hasERC20Approval, hasPermit2Approval] = await Promise.all([
+          checkUSDCApproval(smartAccountAddress),
+          checkPermit2Allowance(smartAccountAddress),
+        ]);
+        
+        return {
+          delegation,
+          smartAccountAddress,
+          needsERC20: !hasERC20Approval,
+          needsPermit2: !hasPermit2Approval,
+        };
+      } catch (error) {
+        console.error(`[Phase 1] Error checking ${smartAccountAddress}:`, error);
+        // If we can't check, assume approval is needed
+        return {
+          delegation,
+          smartAccountAddress,
+          needsERC20: true,
+          needsPermit2: true,
+        };
+      }
+    })
+  );
+  
+  // Filter to wallets needing approval
+  for (const check of approvalChecks) {
+    if (check.needsERC20 || check.needsPermit2) {
+      needsApproval.push(check);
     }
-  }));
+  }
   
   console.log(`[Phase 1] ${needsApproval.length} wallets need approvals`);
   
@@ -1257,52 +1369,33 @@ async function processApprovals(delegations: DelegationRecord[], isBuy: boolean)
     return;
   }
   
-  // Sequential approval submission (one at a time - still using EOA for approvals)
-  for (const { delegation, smartAccountAddress, needsERC20, needsPermit2 } of needsApproval) {
-    console.log(`[Approval] Processing ${smartAccountAddress}...`);
-    
-    try {
-      if (needsERC20) {
-        console.log(`[Approval] Setting ERC20 approval for ${tokenSymbol} to Permit2...`);
-        const maxApproval = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
-        const erc20ApproveTx = await executeDelegatedERC20Approval(
-          delegation,
-          tokenIn,
-          ADDRESSES.PERMIT2,
-          maxApproval
-        );
-        
-        if (!erc20ApproveTx) {
-          console.error(`[Approval] ❌ ERC20 approval failed for ${smartAccountAddress}`);
-          continue;
-        }
-        console.log(`[Approval] ✅ ERC20 approval success: ${erc20ApproveTx}`);
-        await sleep(1000);
-      }
-      
-      if (needsPermit2) {
-        console.log(`[Approval] Setting Permit2 allowance to Universal Router...`);
-        const permit2ApproveTx = await executeDelegatedPermit2Approval(
-          delegation,
-          tokenIn,
-          ADDRESSES.UNISWAP_ROUTER
-        );
-        
-        if (!permit2ApproveTx) {
-          console.error(`[Approval] ❌ Permit2 approval failed for ${smartAccountAddress}`);
-          continue;
-        }
-        console.log(`[Approval] ✅ Permit2 approval success: ${permit2ApproveTx}`);
-        await sleep(1000);
-      }
-      
-      console.log(`[Approval] ✅ All approvals complete for ${smartAccountAddress}`);
-    } catch (error: any) {
-      console.error(`[Approval] ❌ Failed for ${smartAccountAddress}:`, error?.message || error);
+  // Use nonce key range 0-999 for Phase 1 approvals (Phase 2 uses Date.now() which is ~1.7 trillion)
+  // Each wallet needs up to 2 nonce keys (ERC20 + Permit2), so multiply index by 2
+  const PHASE1_NONCE_BASE = 0n;
+  
+  console.log(`[Phase 1] Submitting ${needsApproval.length} approval UserOps in parallel...`);
+  console.log(`[Phase 1] Nonce key range: ${PHASE1_NONCE_BASE} - ${PHASE1_NONCE_BASE + BigInt(needsApproval.length * 2 - 1)}`);
+  
+  // Submit ALL approvals in parallel with unique nonce keys
+  const approvalResults = await Promise.all(
+    needsApproval.map((task, index) => {
+      const nonceKeyBase = PHASE1_NONCE_BASE + BigInt(index * 2); // Each wallet gets 2 nonce keys
+      return submitApprovalUserOps(task, tokenIn, nonceKeyBase);
+    })
+  );
+  
+  // Summarize results
+  const successful = approvalResults.filter(r => r.success).length;
+  const failed = approvalResults.filter(r => !r.success);
+  
+  console.log(`[Phase 1 Complete] ${successful}/${needsApproval.length} approvals succeeded`);
+  
+  if (failed.length > 0) {
+    console.log(`[Phase 1] Failed approvals:`);
+    for (const f of failed) {
+      console.log(`  - ${f.wallet}: ${f.error}`);
     }
   }
-  
-  console.log(`[Phase 1] Approval phase complete`);
 }
 
 // ============ PHASE 2: PARALLEL SWAPS VIA USEROPS ============
