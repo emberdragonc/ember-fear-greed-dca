@@ -200,19 +200,31 @@ export function useDelegation(): UseDelegationReturn {
       // Get the smart account's environment (deployment addresses)
       const environment = smartAccount.environment;
       
+      // All targets the backend can interact with
+      const allowedTargets = [
+        DELEGATION_ADDRESSES.UNISWAP_ROUTER, // Swap router
+        DELEGATION_ADDRESSES.USDC,            // For approve()
+        DELEGATION_ADDRESSES.WETH,            // For approve()
+      ];
+
       // Create delegation using MetaMask Delegation Framework
-      // This grants the backend permission to call Uniswap swap functions
+      // This grants the backend permission to:
+      // 1. Call Uniswap swap functions
+      // 2. Approve tokens for the router (needed before swaps)
       const delegation = createDelegation({
         to: BACKEND_SIGNER,
         from: smartAccountAddress as Address,
         environment,
-        // Scope: Allow function calls to Uniswap Router
+        // Scope: Allow function calls to Router + token approvals
         scope: {
           type: 'functionCall',
-          targets: [DELEGATION_ADDRESSES.UNISWAP_ROUTER],
+          targets: allowedTargets,
           selectors: [
+            // Uniswap swap functions
             'exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))',
             'exactOutputSingle((address,address,uint24,address,uint256,uint256,uint160))',
+            // ERC20 approve (for USDC/WETH -> Router)
+            'approve(address,uint256)',
           ],
         },
         // Caveats: Time limit and call frequency
@@ -224,11 +236,12 @@ export function useDelegation(): UseDelegationReturn {
           },
           { 
             type: 'limitedCalls', 
-            limit: DELEGATION_CONFIG.MAX_CALLS_PER_DAY * DELEGATION_CONFIG.VALIDITY_DAYS 
+            // Extra calls for approvals (2 tokens * 1 approval each + daily swaps)
+            limit: 2 + (DELEGATION_CONFIG.MAX_CALLS_PER_DAY * DELEGATION_CONFIG.VALIDITY_DAYS)
           },
           {
             type: 'allowedTargets',
-            targets: [DELEGATION_ADDRESSES.UNISWAP_ROUTER],
+            targets: allowedTargets,
           },
         ],
       });
@@ -262,12 +275,17 @@ export function useDelegation(): UseDelegationReturn {
         status: 'signed' as DelegationStatus,
         signature,
         caveats: {
-          allowedTargets: [DELEGATION_ADDRESSES.UNISWAP_ROUTER],
+          allowedTargets: [
+            DELEGATION_ADDRESSES.UNISWAP_ROUTER,
+            DELEGATION_ADDRESSES.USDC,
+            DELEGATION_ADDRESSES.WETH,
+          ],
           allowedMethods: [
             'exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))',
             'exactOutputSingle((address,address,uint24,address,uint256,uint256,uint160))',
+            'approve(address,uint256)',
           ],
-          maxCalls: DELEGATION_CONFIG.MAX_CALLS_PER_DAY * DELEGATION_CONFIG.VALIDITY_DAYS,
+          maxCalls: 2 + (DELEGATION_CONFIG.MAX_CALLS_PER_DAY * DELEGATION_CONFIG.VALIDITY_DAYS),
           expiry: BigInt(expiryTimestamp),
         },
       };

@@ -172,6 +172,84 @@ async function getUSDCBalance(address: Address): Promise<bigint> {
   return balance;
 }
 
+// ============ ALLOWANCE CHECKING ============
+
+async function getTokenAllowance(token: Address, owner: Address, spender: Address): Promise<bigint> {
+  const allowance = await publicClient.readContract({
+    address: token,
+    abi: erc20Abi,
+    functionName: 'allowance',
+    args: [owner, spender],
+  });
+  return allowance;
+}
+
+// ============ DELEGATED APPROVAL ============
+
+async function executeDelegatedApproval(
+  delegation: DelegationRecord,
+  tokenAddress: Address,
+  spenderAddress: Address,
+  amount: bigint
+): Promise<string | null> {
+  try {
+    const signedDelegation = typeof delegation.delegation_data === 'string' 
+      ? JSON.parse(delegation.delegation_data) 
+      : delegation.delegation_data;
+
+    if (!signedDelegation.signature) {
+      console.error('Delegation missing signature');
+      return null;
+    }
+
+    // Encode the approve call
+    const approveCalldata = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [spenderAddress, amount],
+    });
+
+    // Create the execution for approval
+    const execution = createExecution({
+      target: tokenAddress,
+      value: 0n,
+      callData: approveCalldata,
+    });
+
+    // Encode the redeemDelegations call
+    const redeemCalldata = DelegationManager.encode.redeemDelegations({
+      delegations: [[signedDelegation]],
+      modes: [ExecutionMode.SingleDefault],
+      executions: [[execution]],
+    });
+
+    console.log(`Approving ${tokenAddress} for ${spenderAddress}...`);
+
+    // Send transaction
+    const tx = await walletClient.sendTransaction({
+      to: ADDRESSES.DELEGATION_MANAGER,
+      data: redeemCalldata,
+      gas: 300000n,
+    });
+
+    const receipt = await publicClient.waitForTransactionReceipt({ 
+      hash: tx,
+      timeout: 60000,
+    });
+
+    if (receipt.status === 'success') {
+      console.log(`Approval successful: ${tx}`);
+      return tx;
+    } else {
+      console.error('Approval transaction reverted');
+      return null;
+    }
+  } catch (error) {
+    console.error('Delegated approval error:', error);
+    return null;
+  }
+}
+
 // ============ FEE CALCULATION ============
 
 function calculateFee(amount: bigint): bigint {
@@ -442,6 +520,40 @@ async function processUserDCA(
 
   console.log(`Swap: ${formatUnits(swapAmountAfterFee, isBuy ? 6 : 18)} ${isBuy ? 'USDC' : 'ETH'} -> ${isBuy ? 'ETH' : 'USDC'}`);
   console.log(`Fee: ${formatUnits(fee, isBuy ? 6 : 18)} ${isBuy ? 'USDC' : 'ETH'}`);
+
+  // Check if we need to approve the token for the router
+  const currentAllowance = await getTokenAllowance(
+    tokenIn,
+    smartAccountAddress,
+    ADDRESSES.UNISWAP_ROUTER
+  );
+
+  if (currentAllowance < swapAmount) {
+    console.log(`Current allowance: ${formatUnits(currentAllowance, isBuy ? 6 : 18)}, need: ${formatUnits(swapAmount, isBuy ? 6 : 18)}`);
+    console.log('Executing delegated approval...');
+    
+    // Approve max uint256 so we don't need to approve again
+    const maxApproval = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
+    const approvalTx = await executeDelegatedApproval(
+      delegation,
+      tokenIn,
+      ADDRESSES.UNISWAP_ROUTER,
+      maxApproval
+    );
+
+    if (!approvalTx) {
+      return {
+        success: false,
+        txHash: null,
+        error: 'Failed to approve token',
+        amountIn: '0',
+        amountOut: '0',
+        feeCollected: '0',
+      };
+    }
+  } else {
+    console.log('Token already approved ✓');
+  }
 
   // Get swap quote (swapper is the smart account, not EOA)
   const swapQuote = await getSwapQuote(
