@@ -87,7 +87,7 @@ export function DelegationSetup({ isFunded = false }: DelegationSetupProps) {
           <div className="flex justify-between text-sm">
             <span className="text-gray-500">Max Executions:</span>
             <span className="font-medium text-white">
-              {state.delegation.caveats.maxCalls} per day
+              {state.delegation.caveats.maxCalls} total (1 year)
             </span>
           </div>
         </div>
@@ -106,7 +106,7 @@ export function DelegationSetup({ isFunded = false }: DelegationSetupProps) {
               {DELEGATION_ADDRESSES.UNISWAP_ROUTER}
             </p>
             <p className="text-gray-400">
-              <span className="text-gray-500">Methods:</span> exactInputSingle, exactOutputSingle
+              <span className="text-gray-500">Methods:</span> execute, approve
             </p>
             <p className="text-gray-400">
               <span className="text-gray-500">Hash:</span>{' '}
@@ -211,7 +211,7 @@ export function DelegationSetup({ isFunded = false }: DelegationSetupProps) {
           </li>
           <li className="flex items-center gap-2">
             <span className="w-1 h-1 bg-blue-400 rounded-full"></span>
-            Only interact with Uniswap V3 Router
+            Only interact with Uniswap Router + token approvals
           </li>
           <li className="flex items-center gap-2">
             <span className="w-1 h-1 bg-blue-400 rounded-full"></span>
