@@ -7,7 +7,8 @@ import { base } from 'wagmi/chains';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { TOKENS } from '@/lib/swap';
 import { formatUnits, parseUnits, parseEther, encodeFunctionData, http } from 'viem';
-import { createBundlerClient, entryPoint07Address } from 'viem/account-abstraction';
+import { entryPoint07Address } from 'viem/account-abstraction';
+import { createSmartAccountClient } from 'permissionless';
 import { createPimlicoClient } from 'permissionless/clients/pimlico';
 
 // ERC20 ABI
@@ -118,7 +119,6 @@ export function BalanceDisplay() {
     try {
       // Create Pimlico client for gas sponsorship
       const pimlicoClient = createPimlicoClient({
-        chain: base,
         transport: http(BUNDLER_URL),
         entryPoint: {
           address: entryPoint07Address,
@@ -126,26 +126,32 @@ export function BalanceDisplay() {
         },
       });
 
-      // Create bundler client for ERC-4337 user operations with Pimlico paymaster
-      const bundlerClient = createBundlerClient({
+      // Create smart account client with Pimlico paymaster (uses pm_sponsorUserOperation)
+      const smartAccountClient = createSmartAccountClient({
+        account: smartAccount,
         chain: base,
-        transport: http(BUNDLER_URL),
+        bundlerTransport: http(BUNDLER_URL),
         paymaster: pimlicoClient,
         paymasterContext: {
           sponsorshipPolicyId: 'sp_glamorous_leopardon',
         },
+        userOperation: {
+          estimateFeesPerGas: async () => {
+            return (await pimlicoClient.getUserOperationGasPrice()).fast;
+          },
+        },
       });
 
-      // Withdraw FROM the smart account using bundler
-      let calls: { to: `0x${string}`; value: bigint; data: `0x${string}` }[];
+      // Build the withdrawal transaction
+      let txParams: { to: `0x${string}`; value: bigint; data: `0x${string}` };
       
       if (withdrawToken === 'ETH') {
         // ETH: Send value to EOA
-        calls = [{
+        txParams = {
           to: eoaAddress as `0x${string}`,
           value: parseEther(withdrawAmount),
           data: '0x' as `0x${string}`,
-        }];
+        };
       } else {
         // USDC: Call transfer on USDC contract
         const transferData = encodeFunctionData({
@@ -153,27 +159,17 @@ export function BalanceDisplay() {
           functionName: 'transfer',
           args: [eoaAddress as `0x${string}`, parseUnits(withdrawAmount, 6)],
         });
-        calls = [{
+        txParams = {
           to: TOKENS.USDC as `0x${string}`,
           value: 0n,
           data: transferData,
-        }];
+        };
       }
 
-      // Send user operation through bundler
-      const userOpHash = await bundlerClient.sendUserOperation({
-        account: smartAccount,
-        calls,
-      });
+      // Send transaction through smart account client (handles sponsorship automatically)
+      const txHash = await smartAccountClient.sendTransaction(txParams);
       
-      // Wait for the user operation to be included
-      const receipt = await bundlerClient.waitForUserOperationReceipt({ 
-        hash: userOpHash,
-      });
-      
-      if (!receipt.success) {
-        throw new Error('User operation failed');
-      }
+      console.log('Withdrawal tx:', txHash);
       
       setWithdrawAmount('');
       setShowWithdraw(false);
