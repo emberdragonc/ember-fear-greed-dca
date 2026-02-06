@@ -226,8 +226,10 @@ export function useDelegation(): UseDelegationReturn {
             // Legacy V3 swap functions (backup)
             'exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))',
             'exactOutputSingle((address,address,uint24,address,uint256,uint256,uint160))',
-            // ERC20 approve (for USDC/WETH -> Router)
+            // ERC20 approve (for USDC/WETH -> Permit2)
             'approve(address,uint256)',
+            // Permit2 approve (for setting internal allowance to Router)
+            'approve(address,address,uint160,uint48)',
           ],
         },
         // Caveats: Time limit and call frequency
@@ -239,8 +241,8 @@ export function useDelegation(): UseDelegationReturn {
           },
           { 
             type: 'limitedCalls', 
-            // Extra calls for approvals (2 tokens * 1 approval each + daily swaps)
-            limit: 2 + (DELEGATION_CONFIG.MAX_CALLS_PER_DAY * DELEGATION_CONFIG.VALIDITY_DAYS)
+            // Extra calls for approvals (2 tokens * 2 approvals each [ERC20 + Permit2] + daily swaps)
+            limit: 4 + (DELEGATION_CONFIG.MAX_CALLS_PER_DAY * DELEGATION_CONFIG.VALIDITY_DAYS)
           },
           {
             type: 'allowedTargets',
@@ -289,8 +291,9 @@ export function useDelegation(): UseDelegationReturn {
             'exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))',
             'exactOutputSingle((address,address,uint24,address,uint256,uint256,uint160))',
             'approve(address,uint256)',
+            'approve(address,address,uint160,uint48)',
           ],
-          maxCalls: 2 + (DELEGATION_CONFIG.MAX_CALLS_PER_DAY * DELEGATION_CONFIG.VALIDITY_DAYS),
+          maxCalls: 4 + (DELEGATION_CONFIG.MAX_CALLS_PER_DAY * DELEGATION_CONFIG.VALIDITY_DAYS),
           expiry: BigInt(expiryTimestamp),
         },
       };
