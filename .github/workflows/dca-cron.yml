@@ -30,7 +30,10 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           BACKEND_PRIVATE_KEY: ${{ secrets.BACKEND_PRIVATE_KEY }}
+          DCA_BACKEND_PRIVATE_KEY: ${{ secrets.BACKEND_PRIVATE_KEY }}
           UNISWAP_API_KEY: ${{ secrets.UNISWAP_API_KEY }}
+          PIMLICO_API_KEY: ${{ secrets.PIMLICO_API_KEY }}
+          ALCHEMY_API_KEY: ${{ secrets.ALCHEMY_API_KEY }}
         run: npx tsx dca-executor.ts
 
       - name: Log completion
