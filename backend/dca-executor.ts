@@ -58,6 +58,7 @@ interface DCADecision {
 interface DelegationRecord {
   id: string;
   user_address: string;
+  smart_account_address: string; // The actual smart account holding funds
   delegation_hash: string;
   delegation_signature: string;
   delegation_data: string; // JSON stringified delegation
@@ -409,18 +410,20 @@ async function processUserDCA(
   fgValue: number
 ): Promise<ExecutionResult> {
   const userAddress = delegation.user_address as Address;
+  const smartAccountAddress = delegation.smart_account_address as Address;
   
   console.log(`\n--- Processing: ${userAddress} ---`);
+  console.log(`Smart Account: ${smartAccountAddress}`);
 
   // Determine swap direction and get balance
   const isBuy = decision.action === 'buy';
   const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH;
   const tokenOut = isBuy ? ADDRESSES.WETH : ADDRESSES.USDC;
   
-  // Get balance
+  // Get balance from SMART ACCOUNT (not EOA)
   const balance = isBuy 
-    ? await getUSDCBalance(userAddress)
-    : await getETHBalance(userAddress);
+    ? await getUSDCBalance(smartAccountAddress)
+    : await getETHBalance(smartAccountAddress);
 
   if (balance === 0n) {
     console.log(`No ${isBuy ? 'USDC' : 'ETH'} balance, skipping`);
@@ -452,9 +455,9 @@ async function processUserDCA(
   console.log(`Swap: ${formatUnits(swapAmountAfterFee, isBuy ? 6 : 18)} ${isBuy ? 'USDC' : 'ETH'} -> ${isBuy ? 'ETH' : 'USDC'}`);
   console.log(`Fee: ${formatUnits(fee, isBuy ? 6 : 18)} ${isBuy ? 'USDC' : 'ETH'}`);
 
-  // Get swap quote
+  // Get swap quote (swapper is the smart account, not EOA)
   const swapQuote = await getSwapQuote(
-    userAddress,
+    smartAccountAddress,
     tokenIn,
     tokenOut,
     swapAmountAfterFee.toString()
