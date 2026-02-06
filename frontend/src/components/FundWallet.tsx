@@ -37,9 +37,10 @@ const MIN_TOTAL_BALANCE = 5; // Minimum $5 total (USDC + WETH value) to stay inc
 interface FundWalletProps {
   onFunded: (isFunded: boolean) => void;
   hasDelegation?: boolean; // Whether user already has an active delegation
+  isCollapsible?: boolean; // When funded, show collapsed view
 }
 
-export function FundWallet({ onFunded, hasDelegation = false }: FundWalletProps) {
+export function FundWallet({ onFunded, hasDelegation = false, isCollapsible = true }: FundWalletProps) {
   const { smartAccountAddress } = useSmartAccountContext();
   const publicClient = usePublicClient();
   
@@ -51,6 +52,7 @@ export function FundWallet({ onFunded, hasDelegation = false }: FundWalletProps)
   const { price: ethPrice } = useEthPrice();
   const [depositAmount, setDepositAmount] = useState('');
   const [depositToken, setDepositToken] = useState<'USDC' | 'ETH'>('USDC');
+  const [isExpanded, setIsExpanded] = useState(false);
 
   const { sendTransaction, isPending: isSendingEth } = useSendTransaction();
   const { writeContract, isPending: isSendingUsdc } = useWriteContract();
@@ -67,6 +69,9 @@ export function FundWallet({ onFunded, hasDelegation = false }: FundWalletProps)
   const isFunded = hasDelegation 
     ? totalBalanceUsd >= MIN_TOTAL_BALANCE
     : parseFloat(usdcBalance) >= MIN_INITIAL_USDC;
+  
+  // Show collapsed view when funded but no delegation yet (to emphasize next step)
+  const showCollapsed = isCollapsible && isFunded && !hasDelegation && !isExpanded;
 
   // Fetch balances
   useEffect(() => {
@@ -147,6 +152,34 @@ export function FundWallet({ onFunded, hasDelegation = false }: FundWalletProps)
     return null;
   }
 
+  // Collapsed view - shows when funded but waiting for delegation
+  if (showCollapsed) {
+    return (
+      <div className="p-4 rounded-2xl border backdrop-blur-sm bg-emerald-500/10 border-emerald-500/20">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold bg-emerald-500 text-white">
+              ✓
+            </span>
+            <div>
+              <span className="text-sm font-medium text-emerald-400">Wallet Funded</span>
+              <span className="text-sm text-gray-400 ml-2">
+                ${parseFloat(usdcBalance).toFixed(2)} USDC
+                {parseFloat(wethBalance) > 0 && ` + ${parseFloat(wethBalance).toFixed(4)} ETH`}
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={() => setIsExpanded(true)}
+            className="text-xs text-gray-400 hover:text-white transition"
+          >
+            Add more ↓
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`p-6 rounded-2xl border backdrop-blur-sm ${
       isFunded 
@@ -164,11 +197,21 @@ export function FundWallet({ onFunded, hasDelegation = false }: FundWalletProps)
           </span>
           Fund Your Wallet
         </h3>
-        {isFunded && (
-          <span className="px-3 py-1 text-xs font-medium rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-            Ready
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {isFunded && (
+            <span className="px-3 py-1 text-xs font-medium rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+              Ready
+            </span>
+          )}
+          {isFunded && !hasDelegation && isExpanded && (
+            <button
+              onClick={() => setIsExpanded(false)}
+              className="text-xs text-gray-400 hover:text-white transition"
+            >
+              Collapse ↑
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Loading State */}

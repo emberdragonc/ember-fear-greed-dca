@@ -238,13 +238,28 @@ export function DelegationSetup({ isFunded = false }: DelegationSetupProps) {
 
   // Setup form
   return (
-    <div className={`p-6 rounded-2xl border backdrop-blur-sm ${
-      canActivate ? 'bg-white/5 border-white/10' : 'bg-white/[0.02] border-white/5'
+    <div className={`p-6 rounded-2xl border backdrop-blur-sm transition-all ${
+      canActivate 
+        ? 'bg-gradient-to-br from-blue-500/10 to-purple-500/10 border-blue-500/30 ring-2 ring-blue-500/20' 
+        : 'bg-white/[0.02] border-white/5'
     }`}>
+      {/* Prominent nudge when wallet is funded but not yet delegated */}
+      {canActivate && (
+        <div className="mb-4 p-4 bg-gradient-to-r from-orange-500/20 to-yellow-500/20 rounded-xl border border-orange-500/30 animate-pulse">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">👇</span>
+            <div>
+              <p className="font-bold text-orange-300">Almost there! Activate your strategy</p>
+              <p className="text-sm text-orange-400/80">Your wallet is funded. Complete this last step to start automated DCA.</p>
+            </div>
+          </div>
+        </div>
+      )}
+      
       <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
         <span className={`w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold ${
           canActivate 
-            ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' 
+            ? 'bg-blue-500 text-white animate-bounce' 
             : 'bg-gray-500/20 text-gray-500 border border-gray-500/30'
         }`}>
           3
