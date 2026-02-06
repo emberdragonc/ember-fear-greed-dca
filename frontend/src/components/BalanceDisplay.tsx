@@ -7,7 +7,7 @@ import { base } from 'wagmi/chains';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { TOKENS } from '@/lib/swap';
 import { formatUnits, parseUnits, parseEther, encodeFunctionData, http } from 'viem';
-import { createBundlerClient, createPaymasterClient } from 'viem/account-abstraction';
+import { createBundlerClient } from 'viem/account-abstraction';
 
 // ERC20 ABI
 const erc20Abi = [
@@ -30,9 +30,8 @@ const erc20Abi = [
   },
 ] as const;
 
-// Pimlico bundler URL for Base (with API key for paymaster sponsorship)
-const PIMLICO_API_KEY = process.env.NEXT_PUBLIC_PIMLICO_API_KEY || '';
-const BUNDLER_URL = `https://api.pimlico.io/v2/8453/rpc?apikey=${PIMLICO_API_KEY}`;
+// Pimlico bundler URL for Base (public bundler - no paymaster sponsorship)
+const BUNDLER_URL = 'https://public.pimlico.io/v2/8453/rpc';
 
 export function BalanceDisplay() {
   const { address: eoaAddress } = useAccount();
@@ -115,16 +114,11 @@ export function BalanceDisplay() {
 
     setIsWithdrawing(true);
     try {
-      // Create paymaster client for gas sponsorship
-      const paymasterClient = createPaymasterClient({
-        transport: http(BUNDLER_URL),
-      });
-
-      // Create bundler client for ERC-4337 user operations with paymaster
+      // Create bundler client for ERC-4337 user operations
+      // Smart account pays its own gas from ETH balance (no paymaster)
       const bundlerClient = createBundlerClient({
         chain: base,
         transport: http(BUNDLER_URL),
-        paymaster: paymasterClient,
       });
 
       // Withdraw FROM the smart account using bundler
@@ -177,7 +171,19 @@ export function BalanceDisplay() {
       alert('Withdrawal successful!');
     } catch (error) {
       console.error('Withdraw failed:', error);
-      alert(error instanceof Error ? error.message : 'Withdrawal failed');
+      // Sanitize error message - don't expose URLs or API keys
+      let errorMsg = 'Withdrawal failed';
+      if (error instanceof Error) {
+        // Remove any URLs from error message
+        errorMsg = error.message.replace(/https?:\/\/[^\s]+/g, '[URL]');
+        // Common errors
+        if (error.message.includes('insufficient funds')) {
+          errorMsg = 'Insufficient ETH in smart account for gas. Deposit some ETH first.';
+        } else if (error.message.includes('User rejected')) {
+          errorMsg = 'Transaction rejected';
+        }
+      }
+      alert(errorMsg);
     } finally {
       setIsWithdrawing(false);
     }
