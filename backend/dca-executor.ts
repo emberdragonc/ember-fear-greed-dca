@@ -18,6 +18,8 @@ import { base } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 import { createClient } from '@supabase/supabase-js';
 import { createExecution, ExecutionMode, toMetaMaskSmartAccount, Implementation } from '@metamask/smart-accounts-kit';
+import { getCounterfactualAccountData } from '@metamask/smart-accounts-kit/utils';
+import { DELEGATOR_CONTRACTS } from '@metamask/delegation-deployments';
 import { DelegationManager } from '@metamask/smart-accounts-kit/contracts';
 import { createBundlerClient, type UserOperation } from 'viem/account-abstraction';
 import { encodeNonce } from 'permissionless/utils';
@@ -285,6 +287,86 @@ async function initBackendSmartAccount() {
   }
 
   return _backendSmartAccount;
+}
+
+// ============ USER SMART ACCOUNT DEPLOYMENT ============
+
+// Get Base v1.3.0 contracts
+const BASE_CONTRACTS_V1_3 = (DELEGATOR_CONTRACTS as any)['1.3.0']?.['8453'];
+const SIMPLE_FACTORY = (BASE_CONTRACTS_V1_3?.SimpleFactory || '0x69Aa2f9fe1572F1B640E1bbc512f5c3a734fc77c') as Address;
+const BASE_IMPLEMENTATIONS = {
+  HybridDeleGatorImpl: (BASE_CONTRACTS_V1_3?.HybridDeleGatorImpl || '0x48dBe696A4D990079e039489bA2053B36E8FFEC4') as Address,
+  MultiSigDeleGatorImpl: (BASE_CONTRACTS_V1_3?.MultiSigDeleGatorImpl || '0x0000000000000000000000000000000000000000') as Address,
+};
+
+async function ensureUserSmartAccountDeployed(
+  smartAccountAddress: Address,
+  userEOA: Address
+): Promise<boolean> {
+  try {
+    // Check if smart account is already deployed
+    const code = await publicClient.getCode({ address: smartAccountAddress });
+    if (code && code.length > 2) {
+      console.log(`[Deploy] Smart account ${smartAccountAddress} already deployed ✓`);
+      return true;
+    }
+
+    console.log(`[Deploy] Smart account ${smartAccountAddress} not deployed, deploying via factory...`);
+    console.log(`[Deploy] User EOA: ${userEOA}`);
+
+    // Use SDK to get the correct factory data (includes proxy bytecode)
+    const accountData = await getCounterfactualAccountData({
+      factory: SIMPLE_FACTORY,
+      implementations: BASE_IMPLEMENTATIONS,
+      implementation: Implementation.Hybrid,
+      deployParams: [userEOA, [], [], []], // Owner only, no extra keys
+      deploySalt: '0x0000000000000000000000000000000000000000000000000000000000000000' as Hex,
+    });
+
+    // Verify address matches
+    if (accountData.address.toLowerCase() !== smartAccountAddress.toLowerCase()) {
+      console.error(`[Deploy] Address mismatch! Expected ${smartAccountAddress}, got ${accountData.address}`);
+      console.error(`[Deploy] This may indicate different deploy params were used during delegation signing`);
+      return false;
+    }
+
+    console.log(`[Deploy] Calling factory at ${SIMPLE_FACTORY}`);
+    console.log(`[Deploy] Factory data: ${accountData.factoryData.slice(0, 66)}...`);
+
+    // Call the factory directly using the backend wallet
+    const txHash = await walletClient.sendTransaction({
+      to: SIMPLE_FACTORY,
+      data: accountData.factoryData,
+      gas: 500000n,
+    });
+
+    console.log(`[Deploy] Transaction submitted: ${txHash}`);
+
+    // Wait for confirmation
+    const receipt = await publicClient.waitForTransactionReceipt({
+      hash: txHash,
+      timeout: 60000,
+    });
+
+    if (receipt.status === 'success') {
+      // Verify the deployed address matches
+      const deployedCode = await publicClient.getCode({ address: smartAccountAddress });
+      if (deployedCode && deployedCode.length > 2) {
+        console.log(`[Deploy] ✅ Smart account deployed successfully at ${smartAccountAddress}`);
+        return true;
+      } else {
+        console.error(`[Deploy] ❌ Deployment succeeded but account not found at expected address`);
+        return false;
+      }
+    } else {
+      console.error('[Deploy] ❌ Transaction reverted');
+      return false;
+    }
+  } catch (error: any) {
+    console.error('[Deploy] Error deploying smart account:', error?.message || error);
+    if (error?.cause) console.error('[Deploy] Cause:', error.cause);
+    return false;
+  }
 }
 
 // ============ DELEGATION MANAGER ABI ============
@@ -1332,6 +1414,57 @@ async function submitApprovalUserOps(
   }
 }
 
+// ============ PHASE 0: DEPLOY UNDEPLOYED USER ACCOUNTS ============
+
+async function deployUndeployedAccounts(delegations: DelegationRecord[]): Promise<void> {
+  console.log(`\n[Phase 0] Checking ${delegations.length} smart accounts for deployment status...`);
+
+  const undeployed: DelegationRecord[] = [];
+
+  // Check which accounts need deployment
+  for (const delegation of delegations) {
+    const smartAccountAddress = delegation.smart_account_address as Address;
+    try {
+      const code = await publicClient.getCode({ address: smartAccountAddress });
+      if (!code || code.length <= 2) {
+        undeployed.push(delegation);
+        console.log(`[Phase 0] ${smartAccountAddress} - NOT DEPLOYED`);
+      } else {
+        console.log(`[Phase 0] ${smartAccountAddress} - deployed ✓`);
+      }
+    } catch (error: any) {
+      console.error(`[Phase 0] Error checking ${smartAccountAddress}:`, error?.message);
+    }
+  }
+
+  if (undeployed.length === 0) {
+    console.log(`[Phase 0] All ${delegations.length} accounts already deployed ✓`);
+    return;
+  }
+
+  console.log(`\n[Phase 0] Deploying ${undeployed.length} accounts via factory...`);
+
+  // Deploy each undeployed account
+  for (const delegation of undeployed) {
+    const smartAccountAddress = delegation.smart_account_address as Address;
+    const userEOA = delegation.user_address as Address;
+
+    const deployed = await ensureUserSmartAccountDeployed(smartAccountAddress, userEOA);
+    if (deployed) {
+      console.log(`[Phase 0] ✅ ${smartAccountAddress} deployed successfully`);
+    } else {
+      console.error(`[Phase 0] ❌ Failed to deploy ${smartAccountAddress}`);
+    }
+
+    // Small delay between deployments to avoid nonce issues
+    await sleep(1000);
+  }
+
+  console.log(`[Phase 0] Deployment phase complete`);
+}
+
+// ============ PHASE 1: APPROVALS ============
+
 async function processApprovals(delegations: DelegationRecord[], isBuy: boolean): Promise<void> {
   const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH;
   const tokenSymbol = isBuy ? 'USDC' : 'WETH';
@@ -1613,6 +1746,22 @@ async function processUserDCA(
   const tokenDecimals = isBuy ? 6 : 18;
   const tokenSymbol = isBuy ? 'USDC' : 'ETH';
 
+  // Ensure user's smart account is deployed before proceeding
+  const isDeployed = await ensureUserSmartAccountDeployed(smartAccountAddress, userAddress);
+  if (!isDeployed) {
+    return {
+      success: false,
+      txHash: null,
+      error: 'Failed to deploy user smart account',
+      errorType: 'revert',
+      amountIn: '0',
+      amountOut: '0',
+      feeCollected: '0',
+      retryCount: 0,
+      lastError: 'Smart account deployment failed - check user EOA address matches delegation',
+    };
+  }
+
   let balance: bigint;
   try {
     const { result: balanceResult, error: balanceError, attempts } = await withRetry(
@@ -1782,15 +1931,37 @@ async function runDCA() {
   }
 
   // 3. Get active delegations
-  const delegations = await getActiveDelegations();
-  console.log(`\nActive delegations: ${delegations.length}`);
+  const allDelegations = await getActiveDelegations();
+  console.log(`\nActive delegations: ${allDelegations.length}`);
 
-  if (delegations.length === 0) {
+  if (allDelegations.length === 0) {
     console.log('No active delegations to process');
     return;
   }
 
+  // Filter out delegations with outdated delegate addresses
+  const EXPECTED_DELEGATE = '0xc472e866045d2e9ABd2F2459cE3BDB275b72C7e1'.toLowerCase();
+  const delegations = allDelegations.filter(d => {
+    const delegateMatch = d.delegate.toLowerCase() === EXPECTED_DELEGATE;
+    if (!delegateMatch) {
+      console.log(`[Skip] Wallet ${d.user_address} has outdated delegation (delegate: ${d.delegate}), skipping`);
+    }
+    return delegateMatch;
+  });
+
+  console.log(`Valid delegations after filtering: ${delegations.length}`);
+
+  if (delegations.length === 0) {
+    console.log('No valid delegations to process (all have outdated delegates)');
+    return;
+  }
+
   const isBuy = decision.action === 'buy';
+
+  // ========================================
+  // PHASE 0: Deploy any undeployed user smart accounts
+  // ========================================
+  await deployUndeployedAccounts(delegations);
 
   // ========================================
   // PHASE 1: Process approvals sequentially (still EOA - rare, one-time)

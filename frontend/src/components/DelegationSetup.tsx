@@ -6,7 +6,7 @@ import confetti from 'canvas-confetti';
 import { useDelegation } from '@/hooks/useDelegation';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { useCountdown } from '@/hooks/useCountdown';
-import { formatExpiryDate, DELEGATION_CONFIG, DELEGATION_ADDRESSES } from '@/lib/delegation';
+import { formatExpiryDate, DELEGATION_CONFIG, DELEGATION_ADDRESSES, CURRENT_DELEGATE } from '@/lib/delegation';
 
 interface DelegationSetupProps {
   isFunded?: boolean;
@@ -110,10 +110,34 @@ export function DelegationSetup({ isFunded = false }: DelegationSetupProps) {
     );
   }
 
+  // Check if delegation points to an outdated delegate address
+  const isOutdatedDelegation = state.status === 'signed' && state.delegation && 
+    state.delegation.delegate.toLowerCase() !== CURRENT_DELEGATE.toLowerCase();
+
   // Active delegation view with celebration
   if (state.status === 'signed' && state.delegation && !isExpired) {
     return (
       <div className="space-y-4">
+        {/* Outdated Delegation Warning */}
+        {isOutdatedDelegation && (
+          <div className="p-4 bg-yellow-500/20 rounded-2xl border border-yellow-500/30 backdrop-blur-sm">
+            <div className="flex items-center gap-2 text-yellow-400 font-medium mb-2">
+              <span className="text-xl">⚠️</span>
+              <span>Outdated Delegation</span>
+            </div>
+            <p className="text-yellow-200/80 text-sm mb-3">
+              Your delegation is pointing to an old backend address and won&apos;t be included in daily DCA sweeps. 
+              Please renew your delegation to continue receiving automated swaps.
+            </p>
+            <button
+              onClick={handleRevoke}
+              className="w-full py-2.5 px-4 bg-yellow-500 hover:bg-yellow-400 text-black font-semibold rounded-xl transition-all"
+            >
+              Renew Delegation
+            </button>
+          </div>
+        )}
+
         {/* Celebration Message */}
         {showCelebration && (
           <div className="p-6 bg-gradient-to-br from-emerald-500/20 via-green-500/20 to-teal-500/20 rounded-2xl border border-emerald-500/30 backdrop-blur-sm animate-pulse">

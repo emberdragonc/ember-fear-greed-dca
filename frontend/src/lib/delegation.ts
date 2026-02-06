@@ -24,6 +24,10 @@ export const DELEGATION_ADDRESSES = {
 export const BACKEND_SIGNER = (process.env.NEXT_PUBLIC_BACKEND_SIGNER || 
   '0x0000000000000000000000000000000000000001') as Address;
 
+// Current delegate address (backend smart account)
+// Delegations pointing to a different address are outdated
+export const CURRENT_DELEGATE = '0xc472e866045d2e9ABd2F2459cE3BDB275b72C7e1' as Address;
+
 // Delegation caveats configuration
 export const DELEGATION_CONFIG = {
   // Timestamp caveat: delegation valid for 1 year
