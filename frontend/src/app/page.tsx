@@ -225,7 +225,7 @@ export default function Home() {
               {[
                 { icon: '🔐', title: 'Non-Custodial', desc: 'Your keys, your crypto. Always.' },
                 { icon: '⚡', title: 'Fully Automated', desc: 'Set it and forget it.' },
-                { icon: '🐉', title: '~0.20% Total Fee', desc: 'Uniswap LP ~0.05% + Protocol 0.15% → EMBER stakers.' },
+                { icon: '🐉', title: '~0.25% Total Fee', desc: 'Uniswap LP ~0.05% + Protocol 0.20% → EMBER stakers.' },
               ].map((feature, i) => (
                 <div key={i} className="p-5 rounded-xl bg-white/5 border border-white/10 backdrop-blur-sm hover:bg-white/[0.07] hover:border-white/20 transition-all">
                   <div className="text-2xl mb-3">{feature.icon}</div>
@@ -379,7 +379,7 @@ export default function Home() {
             >
               Ember 🐉
             </a>
-            {' '}• ~0.20% total per swap (Uniswap 0.05% + Protocol 0.15% → EMBER stakers)
+            {' '}• ~0.25% total per swap (Uniswap 0.05% + Protocol 0.20% → EMBER stakers)
           </p>
           <div className="flex items-center gap-4">
             <a 

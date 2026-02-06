@@ -124,7 +124,7 @@ User funds are protected by multiple layers:
 
 ## Fees
 
-- **Protocol fee:** 0.15% (15 bps) per swap
+- **Protocol fee:** 0.20% (20 bps) per swap
 - **Fee recipient:** 100% to EMBER stakers
 - **Staking contract:** `0x434B2A0e38FB3E5D2ACFa2a7aE492C2A53E55Ec9` (Base)
 

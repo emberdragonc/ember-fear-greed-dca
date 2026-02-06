@@ -179,8 +179,8 @@ const ADDRESSES = {
   EMBER_STAKING: '0x434B2A0e38FB3E5D2ACFa2a7aE492C2A53E55Ec9' as Address,
 } as const;
 
-// Fee: 15 basis points = 0.15%
-const FEE_BPS = 15;
+// Fee: 20 basis points = 0.20%
+const FEE_BPS = 20;
 const BPS_DENOMINATOR = 10000;
 
 // F&G Thresholds

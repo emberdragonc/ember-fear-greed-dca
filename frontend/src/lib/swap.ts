@@ -24,7 +24,7 @@ export const TOKENS = CHAIN_ID === 8453 ? {
 
 // Fee recipient (EMBER staking contract - mainnet only)
 export const FEE_RECIPIENT = '0x434B2A0e38FB3E5D2ACFa2a7aE492C2A53E55Ec9';
-export const FEE_BIPS = 15; // 0.15% = 15 basis points
+export const FEE_BIPS = 20; // 0.20% = 20 basis points
 
 export interface QuoteParams {
   swapper: `0x${string}`;
