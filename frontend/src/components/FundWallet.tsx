@@ -43,6 +43,7 @@ export function FundWallet({ onFunded }: FundWalletProps) {
   const [ethBalance, setEthBalance] = useState<string>('0');
   const [wethBalance, setWethBalance] = useState<string>('0');
   const [usdcBalance, setUsdcBalance] = useState<string>('0');
+  const [ethPrice, setEthPrice] = useState<number>(2000);
   const [loading, setLoading] = useState(true);
   const [depositAmount, setDepositAmount] = useState('');
   const [depositToken, setDepositToken] = useState<'USDC' | 'ETH'>('USDC');
@@ -52,6 +53,27 @@ export function FundWallet({ onFunded }: FundWalletProps) {
   
   const isPending = isSendingEth || isSendingUsdc;
   const isFunded = parseFloat(usdcBalance) >= MIN_USDC_BALANCE;
+
+  // Fetch ETH price
+  useEffect(() => {
+    const fetchEthPrice = async () => {
+      try {
+        const response = await fetch(
+          'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd',
+          { cache: 'no-store' }
+        );
+        if (response.ok) {
+          const data = await response.json();
+          setEthPrice(data.ethereum.usd);
+        }
+      } catch (error) {
+        console.error('Error fetching ETH price:', error);
+      }
+    };
+    fetchEthPrice();
+    const interval = setInterval(fetchEthPrice, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Fetch balances
   useEffect(() => {
@@ -161,7 +183,7 @@ export function FundWallet({ onFunded }: FundWalletProps) {
             {loading ? '...' : `${(parseFloat(ethBalance) + parseFloat(wethBalance)).toFixed(4)} ETH`}
           </p>
           {!loading && (
-            <p className="text-xs text-gray-400">≈ ${((parseFloat(ethBalance) + parseFloat(wethBalance)) * 2500).toFixed(2)}</p>
+            <p className="text-xs text-gray-400">≈ ${((parseFloat(ethBalance) + parseFloat(wethBalance)) * ethPrice).toFixed(2)}</p>
           )}
         </div>
         <div className="p-3 bg-black/20 rounded-xl border border-white/5">
