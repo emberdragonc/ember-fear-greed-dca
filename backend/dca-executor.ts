@@ -174,6 +174,38 @@ async function getUSDCBalance(address: Address): Promise<bigint> {
   return balance;
 }
 
+// ============ PERMIT2 ABI ============
+
+const permit2Abi = [
+  {
+    name: 'allowance',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'owner', type: 'address' },
+      { name: 'token', type: 'address' },
+      { name: 'spender', type: 'address' },
+    ],
+    outputs: [
+      { name: 'amount', type: 'uint160' },
+      { name: 'expiration', type: 'uint48' },
+      { name: 'nonce', type: 'uint48' },
+    ],
+  },
+  {
+    name: 'approve',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'spender', type: 'address' },
+      { name: 'amount', type: 'uint160' },
+      { name: 'expiration', type: 'uint48' },
+    ],
+    outputs: [],
+  },
+] as const;
+
 // ============ ALLOWANCE CHECKING ============
 
 async function getTokenAllowance(token: Address, owner: Address, spender: Address): Promise<bigint> {
@@ -186,9 +218,22 @@ async function getTokenAllowance(token: Address, owner: Address, spender: Addres
   return allowance;
 }
 
+async function getPermit2Allowance(owner: Address, token: Address, spender: Address): Promise<{ amount: bigint; expiration: number }> {
+  const result = await publicClient.readContract({
+    address: ADDRESSES.PERMIT2,
+    abi: permit2Abi,
+    functionName: 'allowance',
+    args: [owner, token, spender],
+  });
+  return {
+    amount: BigInt(result[0]),
+    expiration: Number(result[1]),
+  };
+}
+
 // ============ DELEGATED APPROVAL ============
 
-async function executeDelegatedApproval(
+async function executeDelegatedERC20Approval(
   delegation: DelegationRecord,
   tokenAddress: Address,
   spenderAddress: Address,
@@ -204,30 +249,27 @@ async function executeDelegatedApproval(
       return null;
     }
 
-    // Encode the approve call
+    // Encode the ERC20 approve call
     const approveCalldata = encodeFunctionData({
       abi: erc20Abi,
       functionName: 'approve',
       args: [spenderAddress, amount],
     });
 
-    // Create the execution for approval
     const execution = createExecution({
       target: tokenAddress,
       value: 0n,
       callData: approveCalldata,
     });
 
-    // Encode the redeemDelegations call
     const redeemCalldata = DelegationManager.encode.redeemDelegations({
       delegations: [[signedDelegation]],
       modes: [ExecutionMode.SingleDefault],
       executions: [[execution]],
     });
 
-    console.log(`Approving ${tokenAddress} for ${spenderAddress}...`);
+    console.log(`ERC20 Approving ${tokenAddress} for ${spenderAddress}...`);
 
-    // Send transaction
     const tx = await walletClient.sendTransaction({
       to: ADDRESSES.DELEGATION_MANAGER,
       data: redeemCalldata,
@@ -240,14 +282,79 @@ async function executeDelegatedApproval(
     });
 
     if (receipt.status === 'success') {
-      console.log(`Approval successful: ${tx}`);
+      console.log(`ERC20 Approval successful: ${tx}`);
       return tx;
     } else {
-      console.error('Approval transaction reverted');
+      console.error('ERC20 Approval transaction reverted');
       return null;
     }
   } catch (error) {
-    console.error('Delegated approval error:', error);
+    console.error('ERC20 approval error:', error);
+    return null;
+  }
+}
+
+// Set Permit2 internal allowance (different from ERC20 approve!)
+async function executeDelegatedPermit2Approval(
+  delegation: DelegationRecord,
+  tokenAddress: Address,
+  spenderAddress: Address
+): Promise<string | null> {
+  try {
+    const signedDelegation = typeof delegation.delegation_data === 'string' 
+      ? JSON.parse(delegation.delegation_data) 
+      : delegation.delegation_data;
+
+    if (!signedDelegation.signature) {
+      console.error('Delegation missing signature');
+      return null;
+    }
+
+    // Set max uint160 allowance, expiration far in future
+    const maxAmount = BigInt('0xffffffffffffffffffffffffffffffffffffffff'); // uint160 max
+    const expiration = Math.floor(Date.now() / 1000) + (365 * 24 * 60 * 60); // 1 year
+
+    // Encode Permit2.approve(token, spender, amount, expiration)
+    const permit2ApproveCalldata = encodeFunctionData({
+      abi: permit2Abi,
+      functionName: 'approve',
+      args: [tokenAddress, spenderAddress, maxAmount, expiration],
+    });
+
+    const execution = createExecution({
+      target: ADDRESSES.PERMIT2,
+      value: 0n,
+      callData: permit2ApproveCalldata,
+    });
+
+    const redeemCalldata = DelegationManager.encode.redeemDelegations({
+      delegations: [[signedDelegation]],
+      modes: [ExecutionMode.SingleDefault],
+      executions: [[execution]],
+    });
+
+    console.log(`Permit2 Approving ${tokenAddress} for ${spenderAddress}...`);
+
+    const tx = await walletClient.sendTransaction({
+      to: ADDRESSES.DELEGATION_MANAGER,
+      data: redeemCalldata,
+      gas: 300000n,
+    });
+
+    const receipt = await publicClient.waitForTransactionReceipt({ 
+      hash: tx,
+      timeout: 60000,
+    });
+
+    if (receipt.status === 'success') {
+      console.log(`Permit2 Approval successful: ${tx}`);
+      return tx;
+    } else {
+      console.error('Permit2 Approval transaction reverted');
+      return null;
+    }
+  } catch (error) {
+    console.error('Permit2 approval error:', error);
     return null;
   }
 }
@@ -523,38 +630,69 @@ async function processUserDCA(
   console.log(`Swap: ${formatUnits(swapAmountAfterFee, isBuy ? 6 : 18)} ${isBuy ? 'USDC' : 'ETH'} -> ${isBuy ? 'ETH' : 'USDC'}`);
   console.log(`Fee: ${formatUnits(fee, isBuy ? 6 : 18)} ${isBuy ? 'USDC' : 'ETH'}`);
 
-  // Check if we need to approve the token for Permit2 (Universal Router uses Permit2)
-  const currentAllowance = await getTokenAllowance(
+  // STEP 1: Check ERC20 approve to Permit2 contract
+  const erc20Allowance = await getTokenAllowance(
     tokenIn,
     smartAccountAddress,
     ADDRESSES.PERMIT2
   );
 
-  if (currentAllowance < swapAmount) {
-    console.log(`Current Permit2 allowance: ${formatUnits(currentAllowance, isBuy ? 6 : 18)}, need: ${formatUnits(swapAmount, isBuy ? 6 : 18)}`);
-    console.log('Executing delegated approval to Permit2...');
+  if (erc20Allowance < swapAmount) {
+    console.log(`ERC20 allowance to Permit2: ${formatUnits(erc20Allowance, isBuy ? 6 : 18)}, need: ${formatUnits(swapAmount, isBuy ? 6 : 18)}`);
+    console.log('Executing ERC20 approve to Permit2...');
     
-    // Approve max uint256 so we don't need to approve again
     const maxApproval = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
-    const approvalTx = await executeDelegatedApproval(
+    const erc20ApproveTx = await executeDelegatedERC20Approval(
       delegation,
       tokenIn,
       ADDRESSES.PERMIT2,
       maxApproval
     );
 
-    if (!approvalTx) {
+    if (!erc20ApproveTx) {
       return {
         success: false,
         txHash: null,
-        error: 'Failed to approve token for Permit2',
+        error: 'Failed to ERC20 approve token for Permit2',
         amountIn: '0',
         amountOut: '0',
         feeCollected: '0',
       };
     }
   } else {
-    console.log('Token already approved for Permit2 ✓');
+    console.log('ERC20 already approved for Permit2 ✓');
+  }
+
+  // STEP 2: Check Permit2 internal allowance to Universal Router
+  const permit2Allowance = await getPermit2Allowance(
+    smartAccountAddress,
+    tokenIn,
+    ADDRESSES.UNISWAP_ROUTER
+  );
+  const now = Math.floor(Date.now() / 1000);
+
+  if (permit2Allowance.amount < swapAmount || permit2Allowance.expiration < now) {
+    console.log(`Permit2 allowance: ${formatUnits(permit2Allowance.amount, isBuy ? 6 : 18)}, exp: ${permit2Allowance.expiration}`);
+    console.log('Executing Permit2 internal approve...');
+    
+    const permit2ApproveTx = await executeDelegatedPermit2Approval(
+      delegation,
+      tokenIn,
+      ADDRESSES.UNISWAP_ROUTER
+    );
+
+    if (!permit2ApproveTx) {
+      return {
+        success: false,
+        txHash: null,
+        error: 'Failed to set Permit2 internal allowance',
+        amountIn: '0',
+        amountOut: '0',
+        feeCollected: '0',
+      };
+    }
+  } else {
+    console.log('Permit2 internal allowance OK ✓');
   }
 
   // Get swap quote (swapper is the smart account, not EOA)
