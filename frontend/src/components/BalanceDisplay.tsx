@@ -7,7 +7,8 @@ import { base } from 'wagmi/chains';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { TOKENS } from '@/lib/swap';
 import { formatUnits, parseUnits, parseEther, encodeFunctionData, http } from 'viem';
-import { createBundlerClient, createPaymasterClient } from 'viem/account-abstraction';
+import { createBundlerClient, entryPoint07Address } from 'viem/account-abstraction';
+import { createPimlicoClient } from 'permissionless/clients/pimlico';
 
 // ERC20 ABI
 const erc20Abi = [
@@ -115,16 +116,21 @@ export function BalanceDisplay() {
 
     setIsWithdrawing(true);
     try {
-      // Create paymaster client for gas sponsorship
-      const paymasterClient = createPaymasterClient({
+      // Create Pimlico client for gas sponsorship
+      const pimlicoClient = createPimlicoClient({
+        chain: base,
         transport: http(BUNDLER_URL),
+        entryPoint: {
+          address: entryPoint07Address,
+          version: '0.7',
+        },
       });
 
-      // Create bundler client for ERC-4337 user operations with paymaster
+      // Create bundler client for ERC-4337 user operations with Pimlico paymaster
       const bundlerClient = createBundlerClient({
         chain: base,
         transport: http(BUNDLER_URL),
-        paymaster: paymasterClient,
+        paymaster: pimlicoClient,
       });
 
       // Withdraw FROM the smart account using bundler
