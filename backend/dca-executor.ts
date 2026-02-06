@@ -148,6 +148,9 @@ async function withRetry<T>(
 const CHAIN_ID = 8453;
 const TRADING_API = 'https://trade-api.gateway.uniswap.org/v1';
 
+// Alchemy RPC for reliable read operations (balance checks, quote fetching)
+const ALCHEMY_RPC = 'https://base-mainnet.g.alchemy.com/v2/NQlmwdn5GImg3XWpPUNp4';
+
 const ADDRESSES = {
   // Tokens
   ETH: '0x0000000000000000000000000000000000000000' as Address,
@@ -216,7 +219,7 @@ const supabase = createClient(
 
 const publicClient = createPublicClient({
   chain: base,
-  transport: http(),
+  transport: http(ALCHEMY_RPC),
 });
 
 const backendAccount = privateKeyToAccount(process.env.BACKEND_PRIVATE_KEY as Hex);
@@ -224,7 +227,7 @@ const backendAccount = privateKeyToAccount(process.env.BACKEND_PRIVATE_KEY as He
 const walletClient = createWalletClient({
   account: backendAccount,
   chain: base,
-  transport: http(),
+  transport: http(ALCHEMY_RPC),
 });
 
 // ============ DELEGATION MANAGER ABI ============
