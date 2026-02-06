@@ -1226,21 +1226,58 @@ async function runDCA() {
     return;
   }
 
-  // 4. Process each delegation
+  // 4. Process delegations in parallel batches for scalability
+  // With 10 concurrent, 500 wallets = ~50 batches = ~4 minutes instead of 40
+  const BATCH_SIZE = 10;
   let totalVolume = 0n;
   let totalFees = 0n;
   let successCount = 0;
 
-  for (const delegation of delegations) {
-    const result = await processUserDCA(delegation, decision, fg.value);
-    
-    // Log to database
-    await logExecution(delegation.id, delegation.user_address, fg.value, decision, result);
+  console.log(`\nProcessing ${delegations.length} delegations in batches of ${BATCH_SIZE}...`);
 
-    if (result.success) {
-      successCount++;
-      totalVolume += BigInt(result.amountIn);
-      totalFees += BigInt(result.feeCollected);
+  for (let i = 0; i < delegations.length; i += BATCH_SIZE) {
+    const batch = delegations.slice(i, i + BATCH_SIZE);
+    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(delegations.length / BATCH_SIZE);
+    
+    console.log(`\n[Batch ${batchNum}/${totalBatches}] Processing ${batch.length} wallets...`);
+
+    const results = await Promise.all(
+      batch.map(async (delegation) => {
+        try {
+          const result = await processUserDCA(delegation, decision, fg.value);
+          
+          // Log to database
+          await logExecution(delegation.id, delegation.user_address, fg.value, decision, result);
+          
+          return result;
+        } catch (error) {
+          console.error(`Failed to process ${delegation.smart_account_address}:`, error);
+          // Log the failure
+          await logExecution(delegation.id, delegation.user_address, fg.value, decision, {
+            success: false,
+            reason: error instanceof Error ? error.message : 'Unknown error',
+            amountIn: '0',
+            amountOut: '0',
+            feeCollected: '0',
+          });
+          return { success: false, amountIn: '0', amountOut: '0', feeCollected: '0' };
+        }
+      })
+    );
+
+    // Aggregate results
+    for (const result of results) {
+      if (result.success) {
+        successCount++;
+        totalVolume += BigInt(result.amountIn);
+        totalFees += BigInt(result.feeCollected);
+      }
+    }
+
+    // Small delay between batches to avoid rate limits
+    if (i + BATCH_SIZE < delegations.length) {
+      await sleep(1000);
     }
   }
 
