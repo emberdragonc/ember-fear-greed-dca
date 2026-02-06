@@ -6,7 +6,22 @@ import { base } from 'viem/chains';
 
 const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const WETH = '0x4200000000000000000000000000000000000006';
-const ETH_PRICE_USD = 2500; // TODO: fetch from oracle
+
+// Fetch ETH price from CoinGecko
+async function getEthPrice(): Promise<number> {
+  try {
+    const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd', {
+      next: { revalidate: 60 }, // Cache for 60 seconds
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data.ethereum?.usd || 2000;
+    }
+  } catch (e) {
+    console.error('Failed to fetch ETH price:', e);
+  }
+  return 2000; // Fallback
+}
 
 // ERC20 balanceOf
 const erc20Abi = [{
@@ -49,6 +64,7 @@ export async function GET() {
   try {
     const supabase = getSupabase();
     const publicClient = getPublicClient();
+    const ETH_PRICE_USD = await getEthPrice();
 
     // Get all active delegations (try with smart_account_address, fall back if column doesn't exist)
     let delegations: any[] | null = null;
