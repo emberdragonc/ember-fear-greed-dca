@@ -288,13 +288,12 @@ export default function Home() {
         ) : (
           // Connected state - Full Dashboard
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left column - Total Balance + Countdown + Fear & Greed + Balances + Chart + History */}
+            {/* Left column - Total Balance + Countdown + Fear & Greed + Chart */}
             <div className="lg:col-span-1 space-y-6">
               <TotalBalanceCard />
               <CountdownCard />
               <FearGreedGauge />
               <BalanceHistoryChart />
-              <TransactionHistory />
             </div>
 
             {/* Right column - Instructions & Setup */}
@@ -337,6 +336,9 @@ export default function Home() {
               <SmartAccountCard />
               <FundWallet onFunded={handleFundedChange} />
               <DelegationSetup isFunded={isFunded} />
+
+              {/* Transaction History - Full width in right column */}
+              <TransactionHistory />
 
               {/* Security Note */}
               <div className="p-4 bg-purple-500/10 rounded-xl border border-purple-500/20">
