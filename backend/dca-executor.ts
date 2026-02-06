@@ -432,11 +432,13 @@ async function executeDelegatedERC20Approval(
       console.log(`ERC20 Approval successful: ${tx}`);
       return tx;
     } else {
-      console.error('ERC20 Approval transaction reverted');
+      console.error(`ERC20 Approval transaction reverted: ${tx}`);
+      console.error(`Check: https://basescan.org/tx/${tx}`);
       return null;
     }
-  } catch (error) {
-    console.error('ERC20 approval error:', error);
+  } catch (error: any) {
+    console.error('ERC20 approval error:', error?.message || error);
+    if (error?.cause) console.error('Cause:', error.cause);
     return null;
   }
 }

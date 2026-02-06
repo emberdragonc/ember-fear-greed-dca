@@ -45,6 +45,7 @@ export function FundWallet({ onFunded }: FundWalletProps) {
   const [wethBalance, setWethBalance] = useState<string>('0');
   const [usdcBalance, setUsdcBalance] = useState<string>('0');
   const [loading, setLoading] = useState(true);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
   const { price: ethPrice } = useEthPrice();
   const [depositAmount, setDepositAmount] = useState('');
   const [depositToken, setDepositToken] = useState<'USDC' | 'ETH'>('USDC');
@@ -89,6 +90,7 @@ export function FundWallet({ onFunded }: FundWalletProps) {
         console.error('Failed to fetch balances:', error);
       } finally {
         setLoading(false);
+        setInitialLoadDone(true);
       }
     };
 
@@ -98,10 +100,12 @@ export function FundWallet({ onFunded }: FundWalletProps) {
     return () => clearInterval(interval);
   }, [smartAccountAddress, publicClient]);
 
-  // Notify parent of funding status
+  // Notify parent of funding status (only after initial load completes)
   useEffect(() => {
-    onFunded(isFunded);
-  }, [isFunded, onFunded]);
+    if (initialLoadDone) {
+      onFunded(isFunded);
+    }
+  }, [isFunded, onFunded, initialLoadDone]);
 
   const handleDeposit = async () => {
     if (!smartAccountAddress || !depositAmount) return;
@@ -155,24 +159,32 @@ export function FundWallet({ onFunded }: FundWalletProps) {
         )}
       </div>
 
+      {/* Loading State */}
+      {loading && (
+        <div className="flex items-center justify-center gap-2 py-4 mb-4">
+          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-400"></div>
+          <span className="text-sm text-gray-400">Checking balance...</span>
+        </div>
+      )}
+
       {/* Current Balances */}
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        <div className="p-3 bg-black/20 rounded-xl border border-white/5">
-          <p className="text-xs text-gray-500 mb-1">ETH Balance</p>
-          <p className="text-lg font-semibold text-white">
-            {loading ? '...' : `${(parseFloat(ethBalance) + parseFloat(wethBalance)).toFixed(4)} ETH`}
-          </p>
-          {!loading && (
+      {!loading && (
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <div className="p-3 bg-black/20 rounded-xl border border-white/5">
+            <p className="text-xs text-gray-500 mb-1">ETH Balance</p>
+            <p className="text-lg font-semibold text-white">
+              {`${(parseFloat(ethBalance) + parseFloat(wethBalance)).toFixed(4)} ETH`}
+            </p>
             <p className="text-xs text-gray-400">≈ ${((parseFloat(ethBalance) + parseFloat(wethBalance)) * ethPrice).toFixed(2)}</p>
-          )}
+          </div>
+          <div className="p-3 bg-black/20 rounded-xl border border-white/5">
+            <p className="text-xs text-gray-500 mb-1">USDC Balance</p>
+            <p className={`text-lg font-semibold ${isFunded ? 'text-emerald-400' : 'text-white'}`}>
+              {`$${parseFloat(usdcBalance).toFixed(2)}`}
+            </p>
+          </div>
         </div>
-        <div className="p-3 bg-black/20 rounded-xl border border-white/5">
-          <p className="text-xs text-gray-500 mb-1">USDC Balance</p>
-          <p className={`text-lg font-semibold ${isFunded ? 'text-emerald-400' : 'text-white'}`}>
-            {loading ? '...' : `$${parseFloat(usdcBalance).toFixed(2)}`}
-          </p>
-        </div>
-      </div>
+      )}
 
       {/* Deposit Form */}
       {!isFunded && (

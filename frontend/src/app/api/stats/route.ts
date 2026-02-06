@@ -7,11 +7,15 @@ import { base } from 'viem/chains';
 const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const WETH = '0x4200000000000000000000000000000000000006';
 
+// Simple in-memory cache for TVL
+let tvlCache: { value: number; timestamp: number } | null = null;
+const TVL_CACHE_TTL = 30000; // 30 seconds
+
 // Fetch ETH price from CoinGecko
 async function getEthPrice(): Promise<number> {
   try {
     const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd', {
-      next: { revalidate: 60 }, // Cache for 60 seconds
+      next: { revalidate: 60 },
     });
     if (res.ok) {
       const data = await res.json();
@@ -20,7 +24,7 @@ async function getEthPrice(): Promise<number> {
   } catch (e) {
     console.error('Failed to fetch ETH price:', e);
   }
-  return 2000; // Fallback
+  return 2000;
 }
 
 // ERC20 balanceOf
@@ -32,32 +36,119 @@ const erc20Abi = [{
   outputs: [{ name: '', type: 'uint256' }],
 }] as const;
 
+// RPC Configuration - Alchemy primary, public fallback
+const ALCHEMY_RPC = 'https://base-mainnet.g.alchemy.com/v2/NQlmwdn5GImg3XWpPUNp4';
+const FALLBACK_RPC = 'https://mainnet.base.org';
+
 // Lazy-loaded clients
 let _supabase: any = null;
-let _publicClient: any = null;
+let _alchemyClient: any = null;
+let _fallbackClient: any = null;
 
 function getSupabase() {
   if (!_supabase) {
     const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    
-    if (!url || !key) {
-      throw new Error('Supabase credentials not found');
-    }
-    
+    if (!url || !key) throw new Error('Supabase credentials not found');
     _supabase = createClient(url, key);
   }
   return _supabase;
 }
 
-function getPublicClient() {
-  if (!_publicClient) {
-    _publicClient = createPublicClient({
+function getAlchemyClient() {
+  if (!_alchemyClient) {
+    _alchemyClient = createPublicClient({
       chain: base,
-      transport: http(),
+      transport: http(ALCHEMY_RPC, {
+        timeout: 8000,
+        retryCount: 2,
+        retryDelay: 500,
+      }),
     });
   }
-  return _publicClient;
+  return _alchemyClient;
+}
+
+function getFallbackClient() {
+  if (!_fallbackClient) {
+    _fallbackClient = createPublicClient({
+      chain: base,
+      transport: http(FALLBACK_RPC, {
+        timeout: 8000,
+        retryCount: 2,
+        retryDelay: 500,
+      }),
+    });
+  }
+  return _fallbackClient;
+}
+
+// Get public client with fallback support
+function getPublicClient() {
+  return getAlchemyClient();
+}
+
+// Fetch balance for a single wallet with fallback RPC support
+async function fetchWalletBalance(
+  primaryClient: any,
+  address: `0x${string}`,
+  ethPrice: number
+): Promise<number> {
+  async function tryFetchBalances(client: any): Promise<number> {
+    const [ethResult, wethResult, usdcResult] = await Promise.allSettled([
+      client.getBalance({ address }),
+      client.readContract({
+        address: WETH as `0x${string}`,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [address],
+      }),
+      client.readContract({
+        address: USDC as `0x${string}`,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [address],
+      }),
+    ]);
+
+    let total = 0;
+    let allFailed = true;
+
+    if (ethResult.status === 'fulfilled') {
+      total += parseFloat(formatUnits(ethResult.value, 18)) * ethPrice;
+      allFailed = false;
+    }
+    if (wethResult.status === 'fulfilled') {
+      total += parseFloat(formatUnits(wethResult.value as bigint, 18)) * ethPrice;
+      allFailed = false;
+    }
+    if (usdcResult.status === 'fulfilled') {
+      total += parseFloat(formatUnits(usdcResult.value as bigint, 6));
+      allFailed = false;
+    }
+
+    // If all calls failed, throw to trigger fallback
+    if (allFailed) {
+      throw new Error('All RPC calls failed');
+    }
+
+    return total;
+  }
+
+  // Try Alchemy first
+  try {
+    return await tryFetchBalances(primaryClient);
+  } catch (primaryError) {
+    // Fallback to public RPC
+    console.warn(`Alchemy RPC failed for ${address}, trying fallback:`, (primaryError as Error).message);
+    try {
+      const fallbackClient = getFallbackClient();
+      return await tryFetchBalances(fallbackClient);
+    } catch (fallbackError) {
+      console.error(`Fallback RPC also failed for ${address}:`, (fallbackError as Error).message);
+      return 0;
+    }
+  }
 }
 
 export async function GET() {
@@ -66,18 +157,16 @@ export async function GET() {
     const publicClient = getPublicClient();
     const ETH_PRICE_USD = await getEthPrice();
 
-    // Get all active delegations (try with smart_account_address, fall back if column doesn't exist)
+    // Get all active delegations
     let delegations: any[] | null = null;
     let error: any = null;
-    
-    // Try with smart_account_address first
+
     const result = await supabase
       .from('delegations')
       .select('user_address, smart_account_address')
       .gt('expires_at', new Date().toISOString());
-    
+
     if (result.error?.code === '42703') {
-      // Column doesn't exist, try without it
       const fallbackResult = await supabase
         .from('delegations')
         .select('user_address')
@@ -91,75 +180,62 @@ export async function GET() {
 
     if (error) {
       console.error('Failed to fetch delegations:', error);
-      return NextResponse.json({ wallets: 0, tvl: 0 });
+      return NextResponse.json({ wallets: 0, tvl: tvlCache?.value || 0 });
     }
 
     const wallets = delegations?.length || 0;
 
-    // Calculate TVL by summing balances of smart accounts (fall back to EOA if no smart account)
+    // Calculate TVL - use cache if fresh
     let tvl = 0;
+    const now = Date.now();
     
-    if (delegations && delegations.length > 0) {
-      for (const d of delegations) {
-        try {
-          // Prefer smart_account_address, fall back to user_address (EOA)
-          const address = (d.smart_account_address || d.user_address) as `0x${string}`;
-          
-          // Get native ETH balance
-          const ethBalance = await publicClient.getBalance({ address });
-          const ethValue = parseFloat(formatUnits(ethBalance, 18)) * ETH_PRICE_USD;
-          
-          // Get WETH balance (from DCA swaps)
-          const wethBalance = await publicClient.readContract({
-            address: WETH as `0x${string}`,
-            abi: erc20Abi,
-            functionName: 'balanceOf',
-            args: [address],
+    if (tvlCache && (now - tvlCache.timestamp) < TVL_CACHE_TTL) {
+      tvl = tvlCache.value;
+    } else if (delegations && delegations.length > 0) {
+      // Fetch all wallet balances in parallel
+      const balancePromises = delegations.map((d) => {
+        const address = (d.smart_account_address || d.user_address) as `0x${string}`;
+        return fetchWalletBalance(publicClient, address, ETH_PRICE_USD)
+          .catch((err) => {
+            console.error(`Failed to fetch balance for ${address}:`, err.message);
+            return 0;
           });
-          const wethValue = parseFloat(formatUnits(wethBalance, 18)) * ETH_PRICE_USD;
-          
-          // Get USDC balance
-          const usdcBalance = await publicClient.readContract({
-            address: USDC as `0x${string}`,
-            abi: erc20Abi,
-            functionName: 'balanceOf',
-            args: [address],
-          });
-          const usdcValue = parseFloat(formatUnits(usdcBalance, 6));
-          
-          tvl += ethValue + wethValue + usdcValue;
-        } catch (err) {
-          console.error(`Failed to fetch balance for ${d.user_address}:`, err);
-        }
+      });
+
+      const balances = await Promise.all(balancePromises);
+      tvl = balances.reduce((sum, bal) => sum + bal, 0);
+      
+      // Only cache if we got a reasonable value
+      if (tvl > 0) {
+        tvlCache = { value: tvl, timestamp: now };
+      } else if (tvlCache) {
+        // Use stale cache if current fetch failed
+        tvl = tvlCache.value;
       }
     }
 
-    // Fetch execution stats from dca_executions table
+    // Fetch execution stats
     let executions = 0;
     let volume = 0;
-    
+
     try {
-      // Get execution count
       const { count: executionCount } = await supabase
         .from('dca_executions')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'success');
-      
+
       executions = executionCount || 0;
-      
-      // Get total volume (sum of amount_in for successful trades)
+
       const { data: volumeData } = await supabase
         .from('dca_executions')
         .select('amount_in, action')
         .eq('status', 'success');
-      
+
       if (volumeData && volumeData.length > 0) {
         for (const exec of volumeData) {
-          // amount_in is in USDC (6 decimals) for buys, ETH (18 decimals) for sells
           const isBuy = exec.action === 'buy';
           const decimals = isBuy ? 6 : 18;
           const amount = parseFloat(exec.amount_in) / Math.pow(10, decimals);
-          // Convert ETH to USD for sells
           const usdAmount = isBuy ? amount : amount * ETH_PRICE_USD;
           volume += usdAmount;
         }
@@ -170,12 +246,17 @@ export async function GET() {
 
     return NextResponse.json({
       wallets,
-      tvl: Math.round(tvl * 100) / 100, // Round to 2 decimals
+      tvl: Math.round(tvl * 100) / 100,
       executions,
       volume: Math.round(volume * 100) / 100,
     });
   } catch (error) {
     console.error('Stats API error:', error);
-    return NextResponse.json({ wallets: 0, tvl: 0, executions: 0, volume: 0 });
+    return NextResponse.json({
+      wallets: 0,
+      tvl: tvlCache?.value || 0,
+      executions: 0,
+      volume: 0,
+    });
   }
 }

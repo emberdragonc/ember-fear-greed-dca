@@ -118,8 +118,24 @@ export default function Home() {
                 <WalletConnect />
               </div>
             </div>
+
+            {/* 2. Protocol Stats - Social proof (moved up for visibility) */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-10 w-full max-w-2xl">
+              {[
+                { label: 'Total TVL', value: formatUSD(stats.tvl), icon: '💰' },
+                { label: 'Volume', value: formatUSD(stats.volume), icon: '📊' },
+                { label: 'Wallets', value: stats.wallets.toString(), icon: '👛' },
+                { label: 'Executions', value: stats.executions.toString(), icon: '⚡' },
+              ].map((stat, i) => (
+                <div key={i} className="p-4 rounded-xl bg-white/5 border border-white/10 text-center">
+                  <span className="text-lg">{stat.icon}</span>
+                  <p className="text-xl font-bold text-white mt-1">{stat.value}</p>
+                  <p className="text-xs text-gray-500">{stat.label}</p>
+                </div>
+              ))}
+            </div>
             
-            {/* 2. Strategy Cards - Explain the rules */}
+            {/* 3. Strategy Cards - Explain the rules */}
             <div className="grid grid-cols-5 gap-2 md:gap-3 max-w-2xl mb-10 w-full">
               {[
                 { range: '0-25', emoji: '😱', label: 'Extreme Fear', action: 'BUY 5%', color: 'red', actionColor: 'emerald' },
@@ -214,23 +230,7 @@ export default function Home() {
               ))}
             </div>
 
-            {/* 5. Protocol Stats - Social proof */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-10 w-full max-w-2xl">
-              {[
-                { label: 'Total TVL', value: formatUSD(stats.tvl), icon: '💰' },
-                { label: 'Volume', value: formatUSD(stats.volume), icon: '📊' },
-                { label: 'Wallets', value: stats.wallets.toString(), icon: '👛' },
-                { label: 'Executions', value: stats.executions.toString(), icon: '⚡' },
-              ].map((stat, i) => (
-                <div key={i} className="p-4 rounded-xl bg-white/5 border border-white/10 text-center">
-                  <span className="text-lg">{stat.icon}</span>
-                  <p className="text-xl font-bold text-white mt-1">{stat.value}</p>
-                  <p className="text-xs text-gray-500">{stat.label}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* 6. Security Practices - Address objections */}
+            {/* 5. Security Practices - Address objections */}
             <div className="w-full max-w-2xl mb-10">
               <h3 className="text-lg font-semibold text-white mb-4 text-left">🔐 Security Practices</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

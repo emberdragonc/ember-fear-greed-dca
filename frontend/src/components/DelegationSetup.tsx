@@ -246,7 +246,7 @@ export function DelegationSetup({ isFunded = false }: DelegationSetupProps) {
         {/* Base Percentage */}
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-2">
-            DCA Amount (% of balance per execution)
+            Base DCA Amount
           </label>
           <div className="flex items-center gap-4">
             <input
@@ -262,9 +262,36 @@ export function DelegationSetup({ isFunded = false }: DelegationSetupProps) {
               {basePercentage}%
             </span>
           </div>
-          <p className="mt-2 text-xs text-gray-500">
-            During extreme fear/greed, this doubles to {basePercentage * 2}%
-          </p>
+          
+          {/* Strategy Preview Table */}
+          <div className="mt-4 p-3 bg-black/30 rounded-xl border border-white/5">
+            <p className="text-xs font-medium text-gray-400 mb-2">📊 How your strategy will work:</p>
+            <div className="space-y-1.5 text-xs">
+              <div className="flex justify-between items-center py-1 px-2 rounded bg-red-500/10">
+                <span className="text-red-400">😱 Extreme Fear (0-25)</span>
+                <span className="font-bold text-emerald-400">BUY {basePercentage * 2}%</span>
+              </div>
+              <div className="flex justify-between items-center py-1 px-2 rounded bg-orange-500/10">
+                <span className="text-orange-400">😰 Fear (26-45)</span>
+                <span className="font-bold text-emerald-400">BUY {basePercentage}%</span>
+              </div>
+              <div className="flex justify-between items-center py-1 px-2 rounded bg-gray-500/10">
+                <span className="text-gray-400">😐 Neutral (46-54)</span>
+                <span className="font-medium text-gray-500">HOLD</span>
+              </div>
+              <div className="flex justify-between items-center py-1 px-2 rounded bg-lime-500/10">
+                <span className="text-lime-400">😊 Greed (55-75)</span>
+                <span className="font-bold text-red-400">SELL {basePercentage}%</span>
+              </div>
+              <div className="flex justify-between items-center py-1 px-2 rounded bg-green-500/10">
+                <span className="text-green-400">🤑 Extreme Greed (76-100)</span>
+                <span className="font-bold text-red-400">SELL {basePercentage * 2}%</span>
+              </div>
+            </div>
+            <p className="mt-2 text-[10px] text-gray-500 italic">
+              Extreme conditions = 2× the base amount (buy more dips, sell more tops)
+            </p>
+          </div>
         </div>
 
         {/* Target Asset */}
@@ -290,7 +317,7 @@ export function DelegationSetup({ isFunded = false }: DelegationSetupProps) {
         <ul className="text-sm text-blue-400/80 space-y-1.5">
           <li className="flex items-center gap-2">
             <span className="w-1 h-1 bg-blue-400 rounded-full"></span>
-            Swap up to {basePercentage}% of your USDC/ETH balance daily
+            Swap up to {basePercentage * 2}% of your balance daily (max in extreme conditions)
           </li>
           <li className="flex items-center gap-2">
             <span className="w-1 h-1 bg-blue-400 rounded-full"></span>
