@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useAccount, useBalance, useReadContract, useSendTransaction, useWriteContract, usePublicClient, useWalletClient } from 'wagmi';
 import { base } from 'wagmi/chains';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
+import { useEthPrice } from '@/hooks/useEthPrice';
 import { TOKENS } from '@/lib/swap';
 import { formatUnits, parseUnits, parseEther, encodeFunctionData, http } from 'viem';
 import { entryPoint07Address } from 'viem/account-abstraction';
@@ -50,9 +51,7 @@ export function TotalBalanceCard() {
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
   
-  const [ethPrice, setEthPrice] = useState<number | null>(null);
-  const [priceLoading, setPriceLoading] = useState(true);
-  const [priceError, setPriceError] = useState(false);
+  const { price: ethPrice, loading: priceLoading, error: priceError } = useEthPrice();
   
   // Deposit/Withdraw state
   const [depositAmount, setDepositAmount] = useState('');
@@ -66,33 +65,6 @@ export function TotalBalanceCard() {
   const { sendTransaction, isPending: isSendingEth } = useSendTransaction();
   const { writeContract, isPending: isSendingUsdc } = useWriteContract();
   const isPending = isSendingEth || isSendingUsdc;
-
-  // Fetch ETH price from CoinGecko
-  useEffect(() => {
-    const fetchEthPrice = async () => {
-      try {
-        setPriceLoading(true);
-        setPriceError(false);
-        const response = await fetch(
-          'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd',
-          { cache: 'no-store' }
-        );
-        if (!response.ok) throw new Error('Failed to fetch price');
-        const data: EthPriceData = await response.json();
-        setEthPrice(data.ethereum.usd);
-      } catch (error) {
-        console.error('Error fetching ETH price:', error);
-        setPriceError(true);
-        setEthPrice(2500);
-      } finally {
-        setPriceLoading(false);
-      }
-    };
-
-    fetchEthPrice();
-    const interval = setInterval(fetchEthPrice, 60000);
-    return () => clearInterval(interval);
-  }, []);
 
   // Smart wallet ETH balance (native)
   const { data: ethBalance, isLoading: ethLoading, refetch: refetchEth } = useBalance({

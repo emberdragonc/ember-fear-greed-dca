@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { usePublicClient, useSendTransaction, useWriteContract } from 'wagmi';
+import { useEthPrice } from '@/hooks/useEthPrice';
 import { formatUnits, parseUnits, parseEther } from 'viem';
 import { TOKEN_ADDRESSES } from '@/lib/wagmi';
 
@@ -43,8 +44,8 @@ export function FundWallet({ onFunded }: FundWalletProps) {
   const [ethBalance, setEthBalance] = useState<string>('0');
   const [wethBalance, setWethBalance] = useState<string>('0');
   const [usdcBalance, setUsdcBalance] = useState<string>('0');
-  const [ethPrice, setEthPrice] = useState<number>(2000);
   const [loading, setLoading] = useState(true);
+  const { price: ethPrice } = useEthPrice();
   const [depositAmount, setDepositAmount] = useState('');
   const [depositToken, setDepositToken] = useState<'USDC' | 'ETH'>('USDC');
 
@@ -53,27 +54,6 @@ export function FundWallet({ onFunded }: FundWalletProps) {
   
   const isPending = isSendingEth || isSendingUsdc;
   const isFunded = parseFloat(usdcBalance) >= MIN_USDC_BALANCE;
-
-  // Fetch ETH price
-  useEffect(() => {
-    const fetchEthPrice = async () => {
-      try {
-        const response = await fetch(
-          'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd',
-          { cache: 'no-store' }
-        );
-        if (response.ok) {
-          const data = await response.json();
-          setEthPrice(data.ethereum.usd);
-        }
-      } catch (error) {
-        console.error('Error fetching ETH price:', error);
-      }
-    };
-    fetchEthPrice();
-    const interval = setInterval(fetchEthPrice, 60000);
-    return () => clearInterval(interval);
-  }, []);
 
   // Fetch balances
   useEffect(() => {
