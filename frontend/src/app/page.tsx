@@ -15,13 +15,18 @@ import FearGreedGauge from '@/components/FearGreedGauge';
 import { CountdownCard } from '@/components/CountdownCard';
 import { useFearGreed } from '@/hooks/useFearGreed';
 import { useProtocolStats } from '@/hooks/useProtocolStats';
+import { useDelegation } from '@/hooks/useDelegation';
 
 export default function Home() {
   const { isConnected } = useAccount();
   const { data: fgData } = useFearGreed();
   const { stats } = useProtocolStats();
+  const { state: delegationState } = useDelegation();
   const [isFunded, setIsFunded] = useState(false);
   const [showHowItWorks, setShowHowItWorks] = useState(true);
+  
+  // User has delegation if status is 'signed' (active delegation exists)
+  const hasDelegation = delegationState.status === 'signed';
   
   // Check localStorage for dismissed state
   useState(() => {
@@ -334,7 +339,7 @@ export default function Home() {
               )}
 
               <SmartAccountCard />
-              <FundWallet onFunded={handleFundedChange} />
+              <FundWallet onFunded={handleFundedChange} hasDelegation={hasDelegation} />
               <DelegationSetup isFunded={isFunded} />
 
               {/* Transaction History - Full width in right column */}

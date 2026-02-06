@@ -31,13 +31,15 @@ const ERC20_ABI = [
   },
 ] as const;
 
-const MIN_USDC_BALANCE = 10; // Minimum $10 USDC to activate DCA
+const MIN_INITIAL_USDC = 10; // Minimum $10 USDC to activate DCA for first time
+const MIN_TOTAL_BALANCE = 5; // Minimum $5 total (USDC + WETH value) to stay included
 
 interface FundWalletProps {
   onFunded: (isFunded: boolean) => void;
+  hasDelegation?: boolean; // Whether user already has an active delegation
 }
 
-export function FundWallet({ onFunded }: FundWalletProps) {
+export function FundWallet({ onFunded, hasDelegation = false }: FundWalletProps) {
   const { smartAccountAddress } = useSmartAccountContext();
   const publicClient = usePublicClient();
   
@@ -54,7 +56,17 @@ export function FundWallet({ onFunded }: FundWalletProps) {
   const { writeContract, isPending: isSendingUsdc } = useWriteContract();
   
   const isPending = isSendingEth || isSendingUsdc;
-  const isFunded = parseFloat(usdcBalance) >= MIN_USDC_BALANCE;
+  
+  // Calculate total balance in USD (USDC + WETH value)
+  const wethValueUsd = parseFloat(wethBalance) * (ethPrice || 0);
+  const totalBalanceUsd = parseFloat(usdcBalance) + wethValueUsd;
+  
+  // Two-tier funding check:
+  // - New users (no delegation): need $10 USDC to activate
+  // - Existing users (has delegation): need $5 total balance to stay included
+  const isFunded = hasDelegation 
+    ? totalBalanceUsd >= MIN_TOTAL_BALANCE
+    : parseFloat(usdcBalance) >= MIN_INITIAL_USDC;
 
   // Fetch balances
   useEffect(() => {
@@ -227,13 +239,19 @@ export function FundWallet({ onFunded }: FundWalletProps) {
       {!isFunded ? (
         <div className="p-3 bg-yellow-500/10 rounded-xl border border-yellow-500/20">
           <p className="text-sm text-yellow-400">
-            ⚠️ Minimum ${MIN_USDC_BALANCE} USDC required to start DCA buying.
+            {hasDelegation 
+              ? `⚠️ Total balance below $${MIN_TOTAL_BALANCE}. Add funds to continue DCA.`
+              : `⚠️ Minimum $${MIN_INITIAL_USDC} USDC required to start DCA buying.`
+            }
           </p>
         </div>
       ) : (
         <div className="p-3 bg-emerald-500/10 rounded-xl border border-emerald-500/20">
           <p className="text-sm text-emerald-400">
-            ✓ Wallet funded! You can now activate DCA below.
+            {hasDelegation 
+              ? '✓ Balance sufficient for DCA swaps!'
+              : '✓ Wallet funded! You can now activate DCA below.'
+            }
           </p>
         </div>
       )}
