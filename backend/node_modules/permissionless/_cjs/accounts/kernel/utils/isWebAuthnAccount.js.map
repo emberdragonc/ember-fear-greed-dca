@@ -1,0 +1,1 @@
+{"version":3,"file":"isWebAuthnAccount.js","sourceRoot":"","sources":["../../../../accounts/kernel/utils/isWebAuthnAccount.ts"],"names":[],"mappings":";;;AAGO,MAAM,iBAAiB,GAEE,CAAC,KAAK,EAAE,EAAE,CAAC;IACvC,OAAO,KAAK,CAAC,IAAI,KAAK,UAAU,CAAA;AAAA,CACnC,CAAA;AAJY,QAAA,iBAAiB,GAAjB,iBAAiB,CAI7B"}

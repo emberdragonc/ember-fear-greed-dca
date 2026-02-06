@@ -1,0 +1,1 @@
+{"version":3,"file":"wrapMessageHash.d.ts","sourceRoot":"","sources":["../../../../accounts/etherspot/utils/wrapMessageHash.ts"],"names":[],"mappings":"AAAA,OAAO,EACH,KAAK,OAAO,EAOf,MAAM,MAAM,CAAA;AAEb,MAAM,MAAM,qBAAqB,GAAG;IAChC,cAAc,EAAE,OAAO,CAAA;IACvB,OAAO,EAAE,MAAM,CAAA;CAClB,CAAA;AAED,eAAO,MAAM,eAAe,mGA2B3B,CAAA"}

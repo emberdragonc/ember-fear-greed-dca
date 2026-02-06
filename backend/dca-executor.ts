@@ -3,11 +3,11 @@
 // Uses MetaMask Delegation Framework for secure execution
 // Refactored to ERC-4337 architecture with parallel UserOperations
 
-import { 
-  createPublicClient, 
-  createWalletClient, 
-  http, 
-  formatUnits, 
+import {
+  createPublicClient,
+  createWalletClient,
+  http,
+  formatUnits,
   parseUnits,
   encodeFunctionData,
   erc20Abi,
@@ -19,8 +19,9 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { createClient } from '@supabase/supabase-js';
 import { createExecution, ExecutionMode, toMetaMaskSmartAccount, Implementation } from '@metamask/smart-accounts-kit';
 import { DelegationManager } from '@metamask/smart-accounts-kit/contracts';
-import { createBundlerClient } from 'viem/account-abstraction';
+import { createBundlerClient, type UserOperation } from 'viem/account-abstraction';
 import { encodeNonce } from 'permissionless/utils';
+import { createPimlicoClient } from 'permissionless/clients/pimlico';
 
 // ============ RETRY & ERROR HANDLING UTILITIES ============
 
@@ -42,43 +43,43 @@ interface ClassifiedError {
 function classifyError(error: unknown): ClassifiedError {
   const errorMessage = error instanceof Error ? error.message : String(error);
   const errorString = errorMessage.toLowerCase();
-  
+
   // Network errors (retryable)
-  if (errorString.includes('fetch') || 
-      errorString.includes('network') || 
+  if (errorString.includes('fetch') ||
+      errorString.includes('network') ||
       errorString.includes('econnrefused') ||
       errorString.includes('enotfound') ||
       errorString.includes('socket') ||
       errorString.includes('connection')) {
     return { type: 'network', message: errorMessage, originalError: error, retryable: true };
   }
-  
+
   // Timeout errors (retryable)
   if (errorString.includes('timeout') || errorString.includes('timed out')) {
     return { type: 'timeout', message: errorMessage, originalError: error, retryable: true };
   }
-  
+
   // Rate limit errors (retryable with longer backoff)
-  if (errorString.includes('rate limit') || 
-      errorString.includes('429') || 
+  if (errorString.includes('rate limit') ||
+      errorString.includes('429') ||
       errorString.includes('too many requests')) {
     return { type: 'rate_limit', message: errorMessage, originalError: error, retryable: true };
   }
-  
+
   // Quote expired (retryable - get fresh quote)
-  if (errorString.includes('quote') && 
+  if (errorString.includes('quote') &&
       (errorString.includes('expired') || errorString.includes('stale'))) {
     return { type: 'quote_expired', message: errorMessage, originalError: error, retryable: true };
   }
-  
+
   // Revert errors (NOT retryable - will fail again)
-  if (errorString.includes('revert') || 
+  if (errorString.includes('revert') ||
       errorString.includes('execution reverted') ||
       errorString.includes('insufficient') ||
       errorString.includes('transfer amount exceeds')) {
     return { type: 'revert', message: errorMessage, originalError: error, retryable: false };
   }
-  
+
   // Unknown errors - may be retryable
   return { type: 'unknown', message: errorMessage, originalError: error, retryable: true };
 }
@@ -104,9 +105,9 @@ async function withRetry<T>(
   config: Partial<RetryConfig> = {}
 ): Promise<{ result: T | null; error: ClassifiedError | null; attempts: number }> {
   const { maxAttempts, baseDelayMs, maxDelayMs, operation } = { ...DEFAULT_RETRY_CONFIG, ...config };
-  
+
   let lastError: ClassifiedError | null = null;
-  
+
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const result = await fn();
@@ -116,19 +117,19 @@ async function withRetry<T>(
       return { result, error: null, attempts: attempt };
     } catch (err) {
       lastError = classifyError(err);
-      
+
       console.error(`[${operation}] Attempt ${attempt}/${maxAttempts} failed:`, {
         type: lastError.type,
         message: lastError.message,
         retryable: lastError.retryable,
       });
-      
+
       // Don't retry non-retryable errors
       if (!lastError.retryable) {
         console.log(`[${operation}] Error is not retryable, giving up`);
         break;
       }
-      
+
       // Don't sleep after the last attempt
       if (attempt < maxAttempts) {
         // Exponential backoff: 1s, 2s, 4s... capped at maxDelayMs
@@ -136,13 +137,13 @@ async function withRetry<T>(
         // Add jitter (±20%) to prevent thundering herd
         const jitter = delay * 0.2 * (Math.random() - 0.5);
         const actualDelay = Math.floor(delay + jitter);
-        
+
         console.log(`[${operation}] Retrying in ${actualDelay}ms...`);
         await sleep(actualDelay);
       }
     }
   }
-  
+
   return { result: null, error: lastError, attempts: maxAttempts };
 }
 
@@ -157,6 +158,9 @@ const ALCHEMY_RPC = 'https://base-mainnet.g.alchemy.com/v2/NQlmwdn5GImg3XWpPUNp4
 // Pimlico bundler for ERC-4337 UserOperations
 const PIMLICO_API_KEY = process.env.PIMLICO_API_KEY;
 const PIMLICO_BUNDLER_URL = `https://api.pimlico.io/v2/base/rpc?apikey=${PIMLICO_API_KEY}`;
+
+// Pimlico paymaster for gas sponsorship (fixes AA21 didn't pay prefund)
+const PIMLICO_PAYMASTER_URL = `https://api.pimlico.io/v2/8453/rpc?apikey=pim_UQJHzByj343893oNtPGJfq`;
 
 const ADDRESSES = {
   // Tokens
@@ -241,6 +245,11 @@ const walletClient = createWalletClient({
 const bundlerClient = createBundlerClient({
   client: publicClient,
   transport: http(PIMLICO_BUNDLER_URL),
+});
+
+// Pimlico paymaster client for gas sponsorship
+const pimlicoPaymasterClient = createPimlicoClient({
+  transport: http(PIMLICO_PAYMASTER_URL),
 });
 
 // Cached backend smart account (initialized on first use)
@@ -331,12 +340,12 @@ async function fetchFearGreed(): Promise<{ value: number; classification: string
     fetchFearGreedInternal,
     { operation: 'fetchFearGreed' }
   );
-  
+
   if (!result) {
     console.error(`Failed to fetch Fear & Greed after ${attempts} attempts:`, error?.message);
     throw new Error(`Failed to fetch Fear & Greed: ${error?.message}`);
   }
-  
+
   return result;
 }
 
@@ -440,9 +449,9 @@ async function executeDelegatedERC20ApprovalViaUserOp(
 ): Promise<string | null> {
   try {
     const backendSmartAccount = await initBackendSmartAccount();
-    
-    const signedDelegation = typeof delegation.delegation_data === 'string' 
-      ? JSON.parse(delegation.delegation_data) 
+
+    const signedDelegation = typeof delegation.delegation_data === 'string'
+      ? JSON.parse(delegation.delegation_data)
       : delegation.delegation_data;
 
     if (!signedDelegation.signature) {
@@ -473,7 +482,8 @@ async function executeDelegatedERC20ApprovalViaUserOp(
 
     const nonce = encodeNonce({ key: nonceKey, sequence: 0n });
 
-    const userOpHash = await bundlerClient.sendUserOperation({
+    // Prepare the UserOperation
+    const preparedUserOp = await bundlerClient.prepareUserOperation({
       account: backendSmartAccount,
       nonce,
       calls: [{
@@ -483,9 +493,22 @@ async function executeDelegatedERC20ApprovalViaUserOp(
       }],
     });
 
+    // Get gas sponsorship from Pimlico paymaster
+    const sponsoredUserOp = await pimlicoPaymasterClient.sponsorUserOperation({
+      userOperation: preparedUserOp as UserOperation,
+    });
+
+    console.log(`[UserOp] Gas sponsored by Pimlico paymaster`);
+
+    // Submit the sponsored UserOperation
+    const userOpHash = await bundlerClient.sendUserOperation({
+      account: backendSmartAccount,
+      ...sponsoredUserOp,
+    });
+
     console.log(`[UserOp] Submitted: ${userOpHash}`);
 
-    const receipt = await bundlerClient.waitForUserOperationReceipt({ 
+    const receipt = await bundlerClient.waitForUserOperationReceipt({
       hash: userOpHash,
       timeout: 60000,
     });
@@ -513,9 +536,9 @@ async function executeDelegatedPermit2ApprovalViaUserOp(
 ): Promise<string | null> {
   try {
     const backendSmartAccount = await initBackendSmartAccount();
-    
-    const signedDelegation = typeof delegation.delegation_data === 'string' 
-      ? JSON.parse(delegation.delegation_data) 
+
+    const signedDelegation = typeof delegation.delegation_data === 'string'
+      ? JSON.parse(delegation.delegation_data)
       : delegation.delegation_data;
 
     if (!signedDelegation.signature) {
@@ -550,7 +573,8 @@ async function executeDelegatedPermit2ApprovalViaUserOp(
 
     const nonce = encodeNonce({ key: nonceKey, sequence: 0n });
 
-    const userOpHash = await bundlerClient.sendUserOperation({
+    // Prepare the UserOperation
+    const preparedUserOp = await bundlerClient.prepareUserOperation({
       account: backendSmartAccount,
       nonce,
       calls: [{
@@ -560,9 +584,22 @@ async function executeDelegatedPermit2ApprovalViaUserOp(
       }],
     });
 
+    // Get gas sponsorship from Pimlico paymaster
+    const sponsoredUserOp = await pimlicoPaymasterClient.sponsorUserOperation({
+      userOperation: preparedUserOp as UserOperation,
+    });
+
+    console.log(`[UserOp] Gas sponsored by Pimlico paymaster`);
+
+    // Submit the sponsored UserOperation
+    const userOpHash = await bundlerClient.sendUserOperation({
+      account: backendSmartAccount,
+      ...sponsoredUserOp,
+    });
+
     console.log(`[UserOp] Submitted: ${userOpHash}`);
 
-    const receipt = await bundlerClient.waitForUserOperationReceipt({ 
+    const receipt = await bundlerClient.waitForUserOperationReceipt({
       hash: userOpHash,
       timeout: 60000,
     });
@@ -588,8 +625,8 @@ async function executeDelegatedERC20Approval(
   amount: bigint
 ): Promise<string | null> {
   try {
-    const signedDelegation = typeof delegation.delegation_data === 'string' 
-      ? JSON.parse(delegation.delegation_data) 
+    const signedDelegation = typeof delegation.delegation_data === 'string'
+      ? JSON.parse(delegation.delegation_data)
       : delegation.delegation_data;
 
     if (!signedDelegation.signature) {
@@ -624,7 +661,7 @@ async function executeDelegatedERC20Approval(
       gas: 300000n,
     });
 
-    const receipt = await publicClient.waitForTransactionReceipt({ 
+    const receipt = await publicClient.waitForTransactionReceipt({
       hash: tx,
       timeout: 60000,
     });
@@ -650,8 +687,8 @@ async function executeDelegatedPermit2Approval(
   spenderAddress: Address
 ): Promise<string | null> {
   try {
-    const signedDelegation = typeof delegation.delegation_data === 'string' 
-      ? JSON.parse(delegation.delegation_data) 
+    const signedDelegation = typeof delegation.delegation_data === 'string'
+      ? JSON.parse(delegation.delegation_data)
       : delegation.delegation_data;
 
     if (!signedDelegation.signature) {
@@ -688,7 +725,7 @@ async function executeDelegatedPermit2Approval(
       gas: 300000n,
     });
 
-    const receipt = await publicClient.waitForTransactionReceipt({ 
+    const receipt = await publicClient.waitForTransactionReceipt({
       hash: tx,
       timeout: 60000,
     });
@@ -790,12 +827,12 @@ async function getSwapQuote(
     () => getSwapQuoteInternal(swapper, tokenIn, tokenOut, amount),
     { operation: 'getSwapQuote' }
   );
-  
+
   if (!result) {
     console.error(`Failed to get swap quote after ${attempts} attempts:`, error?.message);
     return null;
   }
-  
+
   return { ...result, retryInfo: { attempts, lastError: error?.message ?? null } };
 }
 
@@ -810,12 +847,12 @@ async function executeDelegatedSwapViaUserOp(
   nonceKey: bigint
 ): Promise<string> {
   const backendSmartAccount = await initBackendSmartAccount();
-  
+
   // Parse the stored delegation data
-  const signedDelegation = typeof delegation.delegation_data === 'string' 
-    ? JSON.parse(delegation.delegation_data) 
+  const signedDelegation = typeof delegation.delegation_data === 'string'
+    ? JSON.parse(delegation.delegation_data)
     : delegation.delegation_data;
-  
+
   if (!signedDelegation.signature) {
     throw new Error('Delegation missing signature');
   }
@@ -844,9 +881,8 @@ async function executeDelegatedSwapViaUserOp(
   // Encode nonce with parallel key
   const nonce = encodeNonce({ key: nonceKey, sequence: 0n });
 
-  // Submit UserOperation
-  const startTime = Date.now();
-  const userOpHash = await bundlerClient.sendUserOperation({
+  // Prepare the UserOperation
+  const preparedUserOp = await bundlerClient.prepareUserOperation({
     account: backendSmartAccount,
     nonce,
     calls: [{
@@ -855,6 +891,20 @@ async function executeDelegatedSwapViaUserOp(
       value: 0n,
     }],
   });
+
+  // Get gas sponsorship from Pimlico paymaster
+  const sponsoredUserOp = await pimlicoPaymasterClient.sponsorUserOperation({
+    userOperation: preparedUserOp as UserOperation,
+  });
+
+  console.log(`[UserOp] Gas sponsored by Pimlico paymaster`);
+
+  // Submit the sponsored UserOperation
+  const startTime = Date.now();
+  const userOpHash = await bundlerClient.sendUserOperation({
+    account: backendSmartAccount,
+    ...sponsoredUserOp,
+  });
   const submitTime = Date.now() - startTime;
 
   console.log(`[UserOp] Submitted in ${submitTime}ms: ${userOpHash}`);
@@ -862,7 +912,7 @@ async function executeDelegatedSwapViaUserOp(
 
   // Wait for confirmation
   const confirmStartTime = Date.now();
-  const receipt = await bundlerClient.waitForUserOperationReceipt({ 
+  const receipt = await bundlerClient.waitForUserOperationReceipt({
     hash: userOpHash,
     timeout: 120000, // 2 minutes for bundler
   });
@@ -890,11 +940,11 @@ async function executeDelegatedSwapWithRetry(
     () => executeDelegatedSwapViaUserOp(delegation, direction, swapTo, swapData, swapValue, nonceKey),
     { operation: 'executeDelegatedSwapViaUserOp', maxAttempts: 3, baseDelayMs: 2000 }
   );
-  
+
   if (!result) {
     console.error(`Failed to execute delegated swap after ${attempts} attempts:`, error?.message);
   }
-  
+
   return { txHash: result, retryInfo: { attempts, lastError: error } };
 }
 
@@ -906,10 +956,10 @@ async function executeDelegatedSwapInternal(
   swapData: Hex,
   swapValue: bigint
 ): Promise<string> {
-  const signedDelegation = typeof delegation.delegation_data === 'string' 
-    ? JSON.parse(delegation.delegation_data) 
+  const signedDelegation = typeof delegation.delegation_data === 'string'
+    ? JSON.parse(delegation.delegation_data)
     : delegation.delegation_data;
-  
+
   if (!signedDelegation.signature) {
     throw new Error('Delegation missing signature');
   }
@@ -936,7 +986,7 @@ async function executeDelegatedSwapInternal(
 
   console.log(`[Legacy] Transaction submitted: ${redeemTx}`);
 
-  const receipt = await publicClient.waitForTransactionReceipt({ 
+  const receipt = await publicClient.waitForTransactionReceipt({
     hash: redeemTx,
     timeout: 60000,
   });
@@ -960,11 +1010,11 @@ async function executeDelegatedSwap(
     () => executeDelegatedSwapInternal(delegation, direction, swapTo, swapData, swapValue),
     { operation: 'executeDelegatedSwap', maxAttempts: 3, baseDelayMs: 2000 }
   );
-  
+
   if (!result) {
     console.error(`Failed to execute delegated swap after ${attempts} attempts:`, error?.message);
   }
-  
+
   return { txHash: result, retryInfo: { attempts, lastError: error } };
 }
 
@@ -978,8 +1028,8 @@ async function executeDelegatedFeeTransfer(
   if (amount === 0n) return null;
 
   try {
-    const signedDelegation = typeof delegation.delegation_data === 'string' 
-      ? JSON.parse(delegation.delegation_data) 
+    const signedDelegation = typeof delegation.delegation_data === 'string'
+      ? JSON.parse(delegation.delegation_data)
       : delegation.delegation_data;
 
     if (!signedDelegation.signature) {
@@ -1013,7 +1063,7 @@ async function executeDelegatedFeeTransfer(
       gas: 300000n,
     });
 
-    const receipt = await publicClient.waitForTransactionReceipt({ 
+    const receipt = await publicClient.waitForTransactionReceipt({
       hash: tx,
       timeout: 60000,
     });
@@ -1033,7 +1083,7 @@ async function executeDelegatedFeeTransfer(
 
 async function collectFee(
   delegation: DelegationRecord,
-  tokenAddress: Address, 
+  tokenAddress: Address,
   amount: bigint
 ): Promise<string | null> {
   if (amount === 0n) return null;
@@ -1051,7 +1101,7 @@ async function collectFee(
       functionName: 'approve',
       args: [ADDRESSES.EMBER_STAKING, amount],
     });
-    
+
     await publicClient.waitForTransactionReceipt({ hash: approveTx });
 
     const depositTx = await walletClient.writeContract({
@@ -1062,7 +1112,7 @@ async function collectFee(
     });
 
     await publicClient.waitForTransactionReceipt({ hash: depositTx });
-    
+
     console.log(`Fee collected and deposited to stakers: ${formatUnits(amount, tokenAddress === ADDRESSES.USDC ? 6 : 18)} ${tokenAddress === ADDRESSES.USDC ? 'USDC' : 'ETH'}`);
     return depositTx;
   } catch (error) {
@@ -1237,18 +1287,18 @@ async function submitApprovalUserOps(
   nonceKeyBase: bigint
 ): Promise<ApprovalResult> {
   const { delegation, smartAccountAddress, needsERC20, needsPermit2 } = task;
-  
+
   try {
     let erc20TxHash: string | null = null;
     let permit2TxHash: string | null = null;
-    
+
     // Submit ERC20 approval if needed
     if (needsERC20) {
       const maxApproval = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
       const erc20NonceKey = nonceKeyBase; // First nonce key for this wallet
-      
+
       console.log(`[Approval] Submitting ERC20 approval for ${smartAccountAddress} (nonce key: ${erc20NonceKey})`);
-      
+
       erc20TxHash = await executeDelegatedERC20ApprovalViaUserOp(
         delegation,
         tokenIn,
@@ -1256,7 +1306,7 @@ async function submitApprovalUserOps(
         maxApproval,
         erc20NonceKey
       );
-      
+
       if (!erc20TxHash) {
         return {
           wallet: smartAccountAddress,
@@ -1266,23 +1316,23 @@ async function submitApprovalUserOps(
           error: 'ERC20 approval failed',
         };
       }
-      
+
       console.log(`[Approval] ✅ ERC20 approval success for ${smartAccountAddress}: ${erc20TxHash}`);
     }
-    
+
     // Submit Permit2 approval if needed
     if (needsPermit2) {
       const permit2NonceKey = nonceKeyBase + 1n; // Second nonce key for this wallet
-      
+
       console.log(`[Approval] Submitting Permit2 approval for ${smartAccountAddress} (nonce key: ${permit2NonceKey})`);
-      
+
       permit2TxHash = await executeDelegatedPermit2ApprovalViaUserOp(
         delegation,
         tokenIn,
         ADDRESSES.UNISWAP_ROUTER,
         permit2NonceKey
       );
-      
+
       if (!permit2TxHash) {
         return {
           wallet: smartAccountAddress,
@@ -1292,10 +1342,10 @@ async function submitApprovalUserOps(
           error: 'Permit2 approval failed',
         };
       }
-      
+
       console.log(`[Approval] ✅ Permit2 approval success for ${smartAccountAddress}: ${permit2TxHash}`);
     }
-    
+
     return {
       wallet: smartAccountAddress,
       success: true,
@@ -1317,25 +1367,25 @@ async function submitApprovalUserOps(
 async function processApprovals(delegations: DelegationRecord[], isBuy: boolean): Promise<void> {
   const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH;
   const tokenSymbol = isBuy ? 'USDC' : 'WETH';
-  
+
   console.log(`\n[Phase 1] Scanning ${delegations.length} wallets for approval needs...`);
-  
+
   // Initialize backend smart account (needed for UserOps)
   await initBackendSmartAccount();
-  
+
   const needsApproval: ApprovalTask[] = [];
-  
+
   // Parallel check for approval status (read-only via Alchemy)
   const approvalChecks = await Promise.all(
     delegations.map(async (delegation) => {
       const smartAccountAddress = delegation.smart_account_address as Address;
-      
+
       try {
         const [hasERC20Approval, hasPermit2Approval] = await Promise.all([
           checkUSDCApproval(smartAccountAddress),
           checkPermit2Allowance(smartAccountAddress),
         ]);
-        
+
         return {
           delegation,
           smartAccountAddress,
@@ -1354,28 +1404,28 @@ async function processApprovals(delegations: DelegationRecord[], isBuy: boolean)
       }
     })
   );
-  
+
   // Filter to wallets needing approval
   for (const check of approvalChecks) {
     if (check.needsERC20 || check.needsPermit2) {
       needsApproval.push(check);
     }
   }
-  
+
   console.log(`[Phase 1] ${needsApproval.length} wallets need approvals`);
-  
+
   if (needsApproval.length === 0) {
     console.log(`[Phase 1] All wallets already approved ✓`);
     return;
   }
-  
+
   // Use nonce key range 0-999 for Phase 1 approvals (Phase 2 uses Date.now() which is ~1.7 trillion)
   // Each wallet needs up to 2 nonce keys (ERC20 + Permit2), so multiply index by 2
   const PHASE1_NONCE_BASE = 0n;
-  
+
   console.log(`[Phase 1] Submitting ${needsApproval.length} approval UserOps in parallel...`);
   console.log(`[Phase 1] Nonce key range: ${PHASE1_NONCE_BASE} - ${PHASE1_NONCE_BASE + BigInt(needsApproval.length * 2 - 1)}`);
-  
+
   // Submit ALL approvals in parallel with unique nonce keys
   const approvalResults = await Promise.all(
     needsApproval.map((task, index) => {
@@ -1383,13 +1433,13 @@ async function processApprovals(delegations: DelegationRecord[], isBuy: boolean)
       return submitApprovalUserOps(task, tokenIn, nonceKeyBase);
     })
   );
-  
+
   // Summarize results
   const successful = approvalResults.filter(r => r.success).length;
   const failed = approvalResults.filter(r => !r.success);
-  
+
   console.log(`[Phase 1 Complete] ${successful}/${needsApproval.length} approvals succeeded`);
-  
+
   if (failed.length > 0) {
     console.log(`[Phase 1] Failed approvals:`);
     for (const f of failed) {
@@ -1406,15 +1456,15 @@ async function executeSwapWithUserOp(
   nonceKey: bigint
 ): Promise<ExecutionResult> {
   const { delegation, smartAccountAddress, swapAmountAfterFee, fee } = walletData;
-  
+
   const isBuy = decision.action === 'buy';
   const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH;
   const tokenOut = isBuy ? ADDRESSES.WETH : ADDRESSES.USDC;
   const tokenDecimals = isBuy ? 6 : 18;
   const tokenSymbol = isBuy ? 'USDC' : 'ETH';
-  
+
   let totalRetries = 0;
-  
+
   // Get swap quote
   const swapQuote = await getSwapQuote(
     smartAccountAddress,
@@ -1488,41 +1538,41 @@ async function processSwapsParallel(
   const isBuy = decision.action === 'buy';
   const tokenDecimals = isBuy ? 6 : 18;
   const tokenSymbol = isBuy ? 'USDC' : 'ETH';
-  
+
   console.log(`\n[Phase 2] Preparing ${delegations.length} wallets for parallel swaps via UserOps...`);
-  
+
   // Initialize backend smart account
   const backendSmartAccount = await initBackendSmartAccount();
   console.log(`[Phase 2] Using backend smart account: ${backendSmartAccount.address}`);
-  
+
   // Gather balance info for all wallets (parallel reads)
   const walletDataList: WalletData[] = [];
   const walletDataMap = new Map<string, WalletData>();
-  
+
   await Promise.all(delegations.map(async (delegation) => {
     const smartAccountAddress = delegation.smart_account_address as Address;
-    
+
     try {
-      const balance = isBuy 
+      const balance = isBuy
         ? await getUSDCBalance(smartAccountAddress)
         : await getETHBalance(smartAccountAddress);
-      
+
       if (balance < MIN_SWAP_AMOUNT) {
         console.log(`[Phase 2] ${smartAccountAddress}: Insufficient balance (${formatUnits(balance, tokenDecimals)} ${tokenSymbol})`);
         return;
       }
-      
+
       const percentage = BigInt(Math.floor(decision.percentage * 100));
       let swapAmount = (balance * percentage) / 10000n;
-      
+
       const maxAmount = BigInt(delegation.max_amount_per_swap);
       if (swapAmount > maxAmount) {
         swapAmount = maxAmount;
       }
-      
+
       const fee = calculateFee(swapAmount);
       const swapAmountAfterFee = swapAmount - fee;
-      
+
       const walletData: WalletData = {
         delegation,
         smartAccountAddress,
@@ -1531,32 +1581,32 @@ async function processSwapsParallel(
         swapAmountAfterFee,
         fee,
       };
-      
+
       walletDataList.push(walletData);
       walletDataMap.set(smartAccountAddress, walletData);
     } catch (error) {
       console.error(`[Phase 2] Error getting balance for ${smartAccountAddress}:`, error);
     }
   }));
-  
+
   console.log(`[Phase 2] ${walletDataList.length} wallets eligible for swaps`);
-  
+
   if (walletDataList.length === 0) {
     return { results: [], walletDataMap };
   }
-  
+
   // Generate base nonce key from timestamp
   const baseNonceKey = BigInt(Date.now());
   console.log(`[Phase 2] Base nonce key: ${baseNonceKey}`);
-  
+
   // Process ALL swaps in parallel with unique nonce keys
   console.log(`[Phase 2] Submitting ${walletDataList.length} UserOps in parallel...`);
-  
+
   const results = await Promise.all(
     walletDataList.map((walletData, index) => {
       const nonceKey = baseNonceKey + BigInt(index);
       console.log(`[Phase 2] Wallet ${index + 1}/${walletDataList.length} (${walletData.smartAccountAddress}) → nonce key ${nonceKey}`);
-      
+
       return executeSwapWithUserOp(walletData, decision, nonceKey)
         .then(result => result)
         .catch(error => ({
@@ -1572,7 +1622,7 @@ async function processSwapsParallel(
         }));
     })
   );
-  
+
   return { results, walletDataMap };
 }
 
@@ -1584,7 +1634,7 @@ async function processUserDCA(
 ): Promise<ExecutionResult> {
   const userAddress = delegation.user_address as Address;
   const smartAccountAddress = delegation.smart_account_address as Address;
-  
+
   let totalRetries = 0;
   let lastErrorMessage: string | null = null;
   let lastErrorType: ErrorType | null = null;
@@ -1594,17 +1644,17 @@ async function processUserDCA(
   const tokenOut = isBuy ? ADDRESSES.WETH : ADDRESSES.USDC;
   const tokenDecimals = isBuy ? 6 : 18;
   const tokenSymbol = isBuy ? 'USDC' : 'ETH';
-  
+
   let balance: bigint;
   try {
     const { result: balanceResult, error: balanceError, attempts } = await withRetry(
-      async () => isBuy 
+      async () => isBuy
         ? await getUSDCBalance(smartAccountAddress)
         : await getETHBalance(smartAccountAddress),
       { operation: 'getBalance' }
     );
     totalRetries += attempts - 1;
-    
+
     if (balanceResult === null) {
       lastErrorMessage = balanceError?.message ?? 'Failed to fetch balance';
       lastErrorType = balanceError?.type ?? 'unknown';
@@ -1740,7 +1790,7 @@ async function runDCA() {
   // Check backend EOA has gas (needed for paymaster sponsorship or self-pay)
   const backendBalance = await getETHBalance(backendAccount.address);
   console.log(`Backend ETH: ${formatUnits(backendBalance, 18)} ETH`);
-  
+
   if (backendBalance < parseUnits('0.001', 18)) {
     console.error('Backend wallet needs more ETH for gas!');
     return;
@@ -1773,37 +1823,37 @@ async function runDCA() {
   }
 
   const isBuy = decision.action === 'buy';
-  
+
   // ========================================
   // PHASE 1: Process approvals sequentially (still EOA - rare, one-time)
   // ========================================
   await processApprovals(delegations, isBuy);
-  
+
   // ========================================
   // PHASE 2: Process swaps via PARALLEL UserOps
   // ========================================
   const { results, walletDataMap } = await processSwapsParallel(delegations, decision, fg.value);
-  
+
   // Log results to database
   let totalVolume = 0n;
   let totalFees = 0n;
   let successCount = 0;
   const failedDelegations: { delegation: DelegationRecord; error: string }[] = [];
-  
+
   const walletDataArray = Array.from(walletDataMap.values());
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
     const walletData = walletDataArray[i];
-    
+
     if (walletData) {
       await logExecution(
-        walletData.delegation.id, 
-        walletData.delegation.user_address, 
-        fg.value, 
-        decision, 
+        walletData.delegation.id,
+        walletData.delegation.user_address,
+        fg.value,
+        decision,
         result
       );
-      
+
       if (result.success) {
         successCount++;
         totalVolume += BigInt(result.amountIn);
@@ -1820,17 +1870,17 @@ async function runDCA() {
     console.log(`\n========================================`);
     console.log(`  Retrying ${failedDelegations.length} failed wallets (legacy mode)...`);
     console.log(`========================================`);
-    
+
     console.log('Waiting 30s before retry...');
     await sleep(30000);
-    
+
     for (const { delegation, error } of failedDelegations) {
       console.log(`\n[RETRY] ${delegation.smart_account_address} (previous error: ${error})`);
-      
+
       try {
         const result = await processUserDCA(delegation, decision, fg.value);
         await logExecution(delegation.id, delegation.user_address, fg.value, decision, result);
-        
+
         if (result.success) {
           successCount++;
           totalVolume += BigInt(result.amountIn);
@@ -1842,7 +1892,7 @@ async function runDCA() {
       } catch (err) {
         console.error(`[RETRY] ✗ Exception:`, err);
       }
-      
+
       await sleep(2000);
     }
   } else if (failedDelegations.length > MAX_RETRY_WALLETS) {
