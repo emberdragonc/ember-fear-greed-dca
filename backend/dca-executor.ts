@@ -1229,9 +1229,11 @@ async function runDCA() {
   // 4. Process delegations in parallel batches for scalability
   // With 10 concurrent, 500 wallets = ~50 batches = ~4 minutes instead of 40
   const BATCH_SIZE = 10;
+  const MAX_RETRY_WALLETS = 20; // Don't retry more than 20 wallets at end
   let totalVolume = 0n;
   let totalFees = 0n;
   let successCount = 0;
+  const failedDelegations: { delegation: typeof delegations[0]; error: string }[] = [];
 
   console.log(`\nProcessing ${delegations.length} delegations in batches of ${BATCH_SIZE}...`);
 
@@ -1250,17 +1252,28 @@ async function runDCA() {
           // Log to database
           await logExecution(delegation.id, delegation.user_address, fg.value, decision, result);
           
+          // Track failures for end-of-run retry (only retryable errors)
+          if (!result.success && result.errorType && ['network', 'timeout', 'rate_limit', 'quote_expired'].includes(result.errorType)) {
+            failedDelegations.push({ delegation, error: result.error || 'Unknown error' });
+          }
+          
           return result;
         } catch (error) {
           console.error(`Failed to process ${delegation.smart_account_address}:`, error);
+          const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+          
           // Log the failure
           await logExecution(delegation.id, delegation.user_address, fg.value, decision, {
             success: false,
-            reason: error instanceof Error ? error.message : 'Unknown error',
+            reason: errorMsg,
             amountIn: '0',
             amountOut: '0',
             feeCollected: '0',
           });
+          
+          // Track for retry
+          failedDelegations.push({ delegation, error: errorMsg });
+          
           return { success: false, amountIn: '0', amountOut: '0', feeCollected: '0' };
         }
       })
@@ -1279,6 +1292,45 @@ async function runDCA() {
     if (i + BATCH_SIZE < delegations.length) {
       await sleep(1000);
     }
+  }
+
+  // 4b. End-of-run retry for failed wallets (network/timeout errors only)
+  if (failedDelegations.length > 0 && failedDelegations.length <= MAX_RETRY_WALLETS) {
+    console.log(`\n========================================`);
+    console.log(`  Retrying ${failedDelegations.length} failed wallets...`);
+    console.log(`========================================`);
+    
+    // Wait 30 seconds for any rate limits to clear
+    console.log('Waiting 30s before retry...');
+    await sleep(30000);
+    
+    for (const { delegation, error } of failedDelegations) {
+      console.log(`\n[RETRY] ${delegation.smart_account_address} (previous error: ${error})`);
+      
+      try {
+        const result = await processUserDCA(delegation, decision, fg.value);
+        
+        // Log retry result (overwrites previous failure)
+        await logExecution(delegation.id, delegation.user_address, fg.value, decision, result);
+        
+        if (result.success) {
+          successCount++;
+          totalVolume += BigInt(result.amountIn);
+          totalFees += BigInt(result.feeCollected);
+          console.log(`[RETRY] ✓ Success!`);
+        } else {
+          console.log(`[RETRY] ✗ Failed again: ${result.error}`);
+        }
+      } catch (err) {
+        console.error(`[RETRY] ✗ Exception:`, err);
+      }
+      
+      // Small delay between retries
+      await sleep(2000);
+    }
+  } else if (failedDelegations.length > MAX_RETRY_WALLETS) {
+    console.log(`\n⚠️ ${failedDelegations.length} wallets failed - too many to retry (max ${MAX_RETRY_WALLETS})`);
+    console.log('These will be retried in the next daily run.');
   }
 
   // 5. Update protocol stats
