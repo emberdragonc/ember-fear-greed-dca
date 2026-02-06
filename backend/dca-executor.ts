@@ -492,11 +492,86 @@ async function executeDelegatedSwap(
 
 // ============ FEE COLLECTION ============
 
-async function collectFee(tokenAddress: Address, amount: bigint): Promise<string | null> {
+// Execute delegated transfer from user's smart account to backend wallet
+async function executeDelegatedFeeTransfer(
+  delegation: DelegationRecord,
+  tokenAddress: Address,
+  amount: bigint
+): Promise<string | null> {
   if (amount === 0n) return null;
 
   try {
-    // First approve the staking contract to spend the fee
+    const signedDelegation = typeof delegation.delegation_data === 'string' 
+      ? JSON.parse(delegation.delegation_data) 
+      : delegation.delegation_data;
+
+    if (!signedDelegation.signature) {
+      console.error('Delegation missing signature for fee transfer');
+      return null;
+    }
+
+    // Encode ERC20 transfer from smart account to backend wallet
+    const transferCalldata = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: 'transfer',
+      args: [backendAccount.address, amount],
+    });
+
+    const execution = createExecution({
+      target: tokenAddress,
+      value: 0n,
+      callData: transferCalldata,
+    });
+
+    const redeemCalldata = DelegationManager.encode.redeemDelegations({
+      delegations: [[signedDelegation]],
+      modes: [ExecutionMode.SingleDefault],
+      executions: [[execution]],
+    });
+
+    console.log(`Transferring fee via delegation: ${formatUnits(amount, tokenAddress === ADDRESSES.USDC ? 6 : 18)} ${tokenAddress === ADDRESSES.USDC ? 'USDC' : 'WETH'}...`);
+
+    const tx = await walletClient.sendTransaction({
+      to: ADDRESSES.DELEGATION_MANAGER,
+      data: redeemCalldata,
+      gas: 300000n,
+    });
+
+    const receipt = await publicClient.waitForTransactionReceipt({ 
+      hash: tx,
+      timeout: 60000,
+    });
+
+    if (receipt.status === 'success') {
+      console.log(`Fee transfer successful: ${tx}`);
+      return tx;
+    } else {
+      console.error('Fee transfer transaction reverted');
+      return null;
+    }
+  } catch (error) {
+    console.error('Fee transfer error:', error);
+    return null;
+  }
+}
+
+// Collect fee: transfer from user's smart account, then deposit to staking
+async function collectFee(
+  delegation: DelegationRecord,
+  tokenAddress: Address, 
+  amount: bigint
+): Promise<string | null> {
+  if (amount === 0n) return null;
+
+  try {
+    // Step 1: Transfer fee from user's smart account to backend wallet via delegation
+    const transferTx = await executeDelegatedFeeTransfer(delegation, tokenAddress, amount);
+    if (!transferTx) {
+      console.error('Fee transfer from smart account failed');
+      return null;
+    }
+
+    // Step 2: Approve staking contract to spend the fee (from backend wallet)
     const approveTx = await walletClient.writeContract({
       address: tokenAddress,
       abi: erc20Abi,
@@ -506,7 +581,7 @@ async function collectFee(tokenAddress: Address, amount: bigint): Promise<string
     
     await publicClient.waitForTransactionReceipt({ hash: approveTx });
 
-    // Then deposit the fee as rewards
+    // Step 3: Deposit the fee as rewards to stakers
     const depositTx = await walletClient.writeContract({
       address: ADDRESSES.EMBER_STAKING,
       abi: emberStakingAbi,
@@ -516,7 +591,7 @@ async function collectFee(tokenAddress: Address, amount: bigint): Promise<string
 
     await publicClient.waitForTransactionReceipt({ hash: depositTx });
     
-    console.log(`Fee collected: ${formatUnits(amount, tokenAddress === ADDRESSES.USDC ? 6 : 18)} ${tokenAddress === ADDRESSES.USDC ? 'USDC' : 'WETH'}`);
+    console.log(`Fee collected and deposited to stakers: ${formatUnits(amount, tokenAddress === ADDRESSES.USDC ? 6 : 18)} ${tokenAddress === ADDRESSES.USDC ? 'USDC' : 'ETH'}`);
     return depositTx;
   } catch (error) {
     console.error('Fee collection error:', error);
@@ -734,8 +809,8 @@ async function processUserDCA(
     };
   }
 
-  // Collect fee
-  await collectFee(tokenIn, fee);
+  // Collect fee via delegation (transfer from smart account, then deposit to stakers)
+  await collectFee(delegation, tokenIn, fee);
 
   return {
     success: true,

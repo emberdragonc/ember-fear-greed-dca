@@ -6,11 +6,13 @@ import { WalletConnect } from '@/components/WalletConnect';
 import { SmartAccountCard } from '@/components/SmartAccountCard';
 import { FundWallet } from '@/components/FundWallet';
 import { DelegationSetup } from '@/components/DelegationSetup';
-import { BalanceDisplay } from '@/components/BalanceDisplay';
+import { TotalBalanceCard } from '@/components/TotalBalanceCard';
+import { BalanceHistoryChart } from '@/components/BalanceHistoryChart';
 // DCAExecutor removed - automated DCA only, no manual execution
 import { TransactionHistory } from '@/components/TransactionHistory';
 import { TestnetBanner } from '@/components/TestnetBanner';
 import FearGreedGauge from '@/components/FearGreedGauge';
+import { CountdownCard } from '@/components/CountdownCard';
 import { useFearGreed } from '@/hooks/useFearGreed';
 import { useProtocolStats } from '@/hooks/useProtocolStats';
 
@@ -286,10 +288,12 @@ export default function Home() {
         ) : (
           // Connected state - Full Dashboard
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left column - Fear & Greed + Balances + History */}
+            {/* Left column - Total Balance + Countdown + Fear & Greed + Balances + Chart + History */}
             <div className="lg:col-span-1 space-y-6">
+              <TotalBalanceCard />
+              <CountdownCard />
               <FearGreedGauge />
-              <BalanceDisplay />
+              <BalanceHistoryChart />
               <TransactionHistory />
             </div>
 

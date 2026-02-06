@@ -1,9 +1,11 @@
 // DelegationSetup.tsx - UI for configuring and granting DCA delegation
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import confetti from 'canvas-confetti';
 import { useDelegation } from '@/hooks/useDelegation';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
+import { useCountdown } from '@/hooks/useCountdown';
 import { formatExpiryDate, DELEGATION_CONFIG, DELEGATION_ADDRESSES } from '@/lib/delegation';
 
 interface DelegationSetupProps {
@@ -22,10 +24,69 @@ export function DelegationSetup({ isFunded = false }: DelegationSetupProps) {
   const { state: smartAccountState, smartAccountAddress } = useSmartAccountContext();
   const hasSmartAccount = smartAccountState.status === 'created' && !!smartAccountAddress;
   const canActivate = hasSmartAccount && isFunded;
+  
+  const countdown = useCountdown();
 
   const [basePercentage, setBasePercentage] = useState(2.5);
   const [targetAsset, setTargetAsset] = useState('ETH');
   const [showDetails, setShowDetails] = useState(false);
+  const [showCelebration, setShowCelebration] = useState(false);
+  const [previousStatus, setPreviousStatus] = useState<string | null>(null);
+
+  // Detect when delegation becomes signed (success) and trigger celebration
+  useEffect(() => {
+    if (previousStatus === 'loading' && state.status === 'signed') {
+      // Just succeeded! Trigger celebration
+      setShowCelebration(true);
+      triggerConfetti();
+      
+      // Hide celebration after 10 seconds
+      const timeout = setTimeout(() => {
+        setShowCelebration(false);
+      }, 10000);
+      
+      return () => clearTimeout(timeout);
+    }
+    setPreviousStatus(state.status);
+  }, [state.status, previousStatus]);
+
+  const triggerConfetti = () => {
+    // Fire confetti from both sides
+    const defaults = {
+      spread: 60,
+      ticks: 100,
+      gravity: 0.8,
+      decay: 0.94,
+      startVelocity: 30,
+      colors: ['#10B981', '#3B82F6', '#8B5CF6', '#F59E0B', '#EF4444'],
+    };
+
+    // Left side
+    confetti({
+      ...defaults,
+      particleCount: 50,
+      origin: { x: 0.2, y: 0.6 },
+      angle: 60,
+    });
+
+    // Right side
+    confetti({
+      ...defaults,
+      particleCount: 50,
+      origin: { x: 0.8, y: 0.6 },
+      angle: 120,
+    });
+
+    // Center burst after a small delay
+    setTimeout(() => {
+      confetti({
+        ...defaults,
+        particleCount: 100,
+        spread: 100,
+        origin: { x: 0.5, y: 0.5 },
+      });
+    }, 250);
+  };
 
   const handleGrant = async () => {
     await createAndSignDelegation(basePercentage, targetAsset, smartAccountAddress || undefined);
@@ -49,78 +110,104 @@ export function DelegationSetup({ isFunded = false }: DelegationSetupProps) {
     );
   }
 
-  // Active delegation view
+  // Active delegation view with celebration
   if (state.status === 'signed' && state.delegation && !isExpired) {
     return (
-      <div className="p-6 bg-emerald-500/10 rounded-2xl border border-emerald-500/20 backdrop-blur-sm">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
-            <span className="w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold bg-emerald-500 text-white">
-              ✓
-            </span>
-            DCA Delegation Active
-          </h3>
-          <span className="px-3 py-1 text-xs font-medium rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-            {daysUntilExpiry} days left
-          </span>
-        </div>
-
-        <div className="space-y-3 mb-4">
-          <div className="flex justify-between text-sm">
-            <span className="text-gray-500">Base Amount:</span>
-            <span className="font-medium text-white">
-              {state.delegation.basePercentage}% of balance
-            </span>
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-gray-500">Target Asset:</span>
-            <span className="font-medium text-white">
-              {state.delegation.targetAsset}
-            </span>
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-gray-500">Expires:</span>
-            <span className="font-medium text-white">
-              {formatExpiryDate(state.delegation.caveats.expiry)}
-            </span>
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-gray-500">Max Executions:</span>
-            <span className="font-medium text-white">
-              {state.delegation.caveats.maxCalls} total (1 year)
-            </span>
-          </div>
-        </div>
-
-        <button
-          onClick={() => setShowDetails(!showDetails)}
-          className="text-sm text-blue-400 hover:text-blue-300 mb-3"
-        >
-          {showDetails ? 'Hide' : 'Show'} security details
-        </button>
-
-        {showDetails && (
-          <div className="p-3 bg-black/30 rounded-xl text-xs font-mono mb-4 space-y-1 border border-white/5">
-            <p className="text-gray-400">
-              <span className="text-gray-500">Allowed Target:</span>{' '}
-              {DELEGATION_ADDRESSES.UNISWAP_ROUTER}
-            </p>
-            <p className="text-gray-400">
-              <span className="text-gray-500">Methods:</span> execute, approve
-            </p>
-            <p className="text-gray-400">
-              <span className="text-gray-500">Hash:</span>{' '}
-              {state.delegation.delegationHash.slice(0, 20)}...
-            </p>
+      <div className="space-y-4">
+        {/* Celebration Message */}
+        {showCelebration && (
+          <div className="p-6 bg-gradient-to-br from-emerald-500/20 via-green-500/20 to-teal-500/20 rounded-2xl border border-emerald-500/30 backdrop-blur-sm animate-pulse">
+            <div className="text-center">
+              <span className="text-4xl mb-3 block">🎉</span>
+              <h3 className="text-xl font-bold text-white mb-2">
+                Strategy Activated!
+              </h3>
+              <p className="text-emerald-300 mb-4">
+                Your first DCA swap will happen in
+              </p>
+              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-black/30 border border-emerald-500/30">
+                <span className="text-2xl font-bold text-emerald-400 font-mono">
+                  {countdown.mounted ? countdown.formatted : '--:--:--'}
+                </span>
+              </div>
+              <p className="text-xs text-emerald-400/70 mt-3">
+                at 12:00 UTC • Based on Fear & Greed Index
+              </p>
+            </div>
           </div>
         )}
 
-        <button
-          onClick={handleRevoke}
-          className="w-full px-4 py-2 rounded-xl bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30 font-medium transition-colors"
-        >
-          Revoke Delegation
-        </button>
+        {/* Normal Active State */}
+        <div className="p-6 bg-emerald-500/10 rounded-2xl border border-emerald-500/20 backdrop-blur-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+              <span className="w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold bg-emerald-500 text-white">
+                ✓
+              </span>
+              DCA Delegation Active
+            </h3>
+            <span className="px-3 py-1 text-xs font-medium rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+              {daysUntilExpiry} days left
+            </span>
+          </div>
+
+          <div className="space-y-3 mb-4">
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-500">Base Amount:</span>
+              <span className="font-medium text-white">
+                {state.delegation.basePercentage}% of balance
+              </span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-500">Target Asset:</span>
+              <span className="font-medium text-white">
+                {state.delegation.targetAsset}
+              </span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-500">Expires:</span>
+              <span className="font-medium text-white">
+                {formatExpiryDate(state.delegation.caveats.expiry)}
+              </span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-500">Max Executions:</span>
+              <span className="font-medium text-white">
+                {state.delegation.caveats.maxCalls} total (1 year)
+              </span>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setShowDetails(!showDetails)}
+            className="text-sm text-blue-400 hover:text-blue-300 mb-3"
+          >
+            {showDetails ? 'Hide' : 'Show'} security details
+          </button>
+
+          {showDetails && (
+            <div className="p-3 bg-black/30 rounded-xl text-xs font-mono mb-4 space-y-1 border border-white/5">
+              <p className="text-gray-400">
+                <span className="text-gray-500">Allowed Target:</span>{' '}
+                {DELEGATION_ADDRESSES.UNISWAP_ROUTER}
+              </p>
+              <p className="text-gray-400">
+                <span className="text-gray-500">Methods:</span> execute, approve
+              </p>
+              <p className="text-gray-400">
+                <span className="text-gray-500">Hash:</span>{' '}
+                {state.delegation.delegationHash.slice(0, 20)}...
+              </p>
+            </div>
+          )}
+
+          <button
+            onClick={handleRevoke}
+            className="w-full px-4 py-2 rounded-xl bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30 font-medium transition-colors"
+          >
+            Revoke Delegation
+          </button>
+        </div>
       </div>
     );
   }

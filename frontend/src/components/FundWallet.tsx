@@ -7,6 +7,9 @@ import { usePublicClient, useSendTransaction, useWriteContract } from 'wagmi';
 import { formatUnits, parseUnits, parseEther } from 'viem';
 import { TOKEN_ADDRESSES } from '@/lib/wagmi';
 
+// WETH address on Base
+const WETH_ADDRESS = '0x4200000000000000000000000000000000000006' as const;
+
 const ERC20_ABI = [
   {
     inputs: [{ name: 'account', type: 'address' }],
@@ -38,6 +41,7 @@ export function FundWallet({ onFunded }: FundWalletProps) {
   const publicClient = usePublicClient();
   
   const [ethBalance, setEthBalance] = useState<string>('0');
+  const [wethBalance, setWethBalance] = useState<string>('0');
   const [usdcBalance, setUsdcBalance] = useState<string>('0');
   const [loading, setLoading] = useState(true);
   const [depositAmount, setDepositAmount] = useState('');
@@ -61,6 +65,15 @@ export function FundWallet({ onFunded }: FundWalletProps) {
           address: smartAccountAddress as `0x${string}`,
         });
         setEthBalance(formatUnits(ethBal, 18));
+
+        // Fetch WETH balance (from DCA swaps)
+        const wethBal = await publicClient.readContract({
+          address: WETH_ADDRESS,
+          abi: ERC20_ABI,
+          functionName: 'balanceOf',
+          args: [smartAccountAddress as `0x${string}`],
+        } as any);
+        setWethBalance(formatUnits(wethBal as bigint, 18));
 
         // Fetch USDC balance
         const usdcBal = await publicClient.readContract({
@@ -145,8 +158,11 @@ export function FundWallet({ onFunded }: FundWalletProps) {
         <div className="p-3 bg-black/20 rounded-xl border border-white/5">
           <p className="text-xs text-gray-500 mb-1">ETH Balance</p>
           <p className="text-lg font-semibold text-white">
-            {loading ? '...' : `${parseFloat(ethBalance).toFixed(4)} ETH`}
+            {loading ? '...' : `${(parseFloat(ethBalance) + parseFloat(wethBalance)).toFixed(4)} ETH`}
           </p>
+          {!loading && (
+            <p className="text-xs text-gray-400">≈ ${((parseFloat(ethBalance) + parseFloat(wethBalance)) * 2500).toFixed(2)}</p>
+          )}
         </div>
         <div className="p-3 bg-black/20 rounded-xl border border-white/5">
           <p className="text-xs text-gray-500 mb-1">USDC Balance</p>
