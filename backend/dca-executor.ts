@@ -530,6 +530,7 @@ async function getSwapQuoteInternal(
   amount: string
 ): Promise<{ quote: any; swap: any }> {
   // Get quote
+  console.log(`[Quote API] Calling ${TRADING_API}/quote...`);
   const quoteRes = await fetch(`${TRADING_API}/quote`, {
     method: 'POST',
     headers: {
@@ -551,13 +552,17 @@ async function getSwapQuoteInternal(
   if (!quoteRes.ok) {
     const error = await quoteRes.json().catch(() => ({ error: 'Unknown error' }));
     const errorMsg = error.errorCode || error.error || error.message || `HTTP ${quoteRes.status}`;
+    console.error(`[Quote API] FAILED: HTTP ${quoteRes.status} - ${errorMsg}`);
+    console.error(`[Quote API] Full error response:`, JSON.stringify(error, null, 2));
     throw new Error(`Quote API failed: ${errorMsg}`);
   }
 
   const quoteData = await quoteRes.json();
+  console.log(`[Quote API] Quote received successfully`);
 
   // Get swap transaction
   const { permitData, permitTransaction, ...cleanQuote } = quoteData;
+  console.log(`[Quote API] Calling ${TRADING_API}/swap...`);
   const swapRes = await fetch(`${TRADING_API}/swap`, {
     method: 'POST',
     headers: {
@@ -570,10 +575,13 @@ async function getSwapQuoteInternal(
   if (!swapRes.ok) {
     const error = await swapRes.json().catch(() => ({ error: 'Unknown error' }));
     const errorMsg = error.errorCode || error.error || error.message || `HTTP ${swapRes.status}`;
+    console.error(`[Quote API] Swap endpoint FAILED: HTTP ${swapRes.status} - ${errorMsg}`);
+    console.error(`[Quote API] Full error response:`, JSON.stringify(error, null, 2));
     throw new Error(`Swap API failed: ${errorMsg}`);
   }
 
   const swapData = await swapRes.json();
+  console.log(`[Quote API] Swap data received successfully`);
   return { quote: quoteData, swap: swapData.swap };
 }
 
@@ -629,31 +637,42 @@ async function executeDelegatedSwapInternal(
     executions: [[execution]],
   });
 
-  console.log(`[executeDelegatedSwap] Sending transaction to DelegationManager...`);
-  console.log(`  Target: ${swapTo}`);
-  console.log(`  Value: ${swapValue.toString()}`);
-  console.log(`  Direction: ${direction}`);
+  console.log(`[UserOp] Preparing transaction to DelegationManager...`);
+  console.log(`[UserOp]   Target: ${swapTo}`);
+  console.log(`[UserOp]   Value: ${swapValue.toString()}`);
+  console.log(`[UserOp]   Direction: ${direction}`);
+  console.log(`[UserOp]   DelegationManager: ${ADDRESSES.DELEGATION_MANAGER}`);
+  console.log(`[UserOp]   Backend wallet: ${backendAccount.address}`);
+  console.log(`[UserOp]   Calldata length: ${redeemCalldata.length} bytes`);
 
   // Send transaction via backend wallet (EOA redemption)
+  console.log(`[UserOp] Submitting to Alchemy RPC...`);
+  const startTime = Date.now();
   const redeemTx = await walletClient.sendTransaction({
     to: ADDRESSES.DELEGATION_MANAGER,
     data: redeemCalldata,
     gas: 500000n,
   });
+  const submitTime = Date.now() - startTime;
 
-  console.log(`[executeDelegatedSwap] Transaction sent: ${redeemTx}`);
-  console.log(`[executeDelegatedSwap] Waiting for confirmation...`);
+  console.log(`[UserOp] Transaction submitted in ${submitTime}ms: ${redeemTx}`);
+  console.log(`[UserOp] Waiting for confirmation on Alchemy RPC...`);
 
   // Wait for confirmation
+  const confirmStartTime = Date.now();
   const receipt = await publicClient.waitForTransactionReceipt({ 
     hash: redeemTx,
     timeout: 60000,
   });
+  const confirmTime = Date.now() - confirmStartTime;
 
   if (receipt.status === 'success') {
-    console.log(`[executeDelegatedSwap] Transaction confirmed in block ${receipt.blockNumber}`);
+    console.log(`[UserOp] Transaction confirmed in block ${receipt.blockNumber} (${confirmTime}ms)`);
+    console.log(`[UserOp] Gas used: ${receipt.gasUsed.toString()}`);
     return redeemTx;
   } else {
+    console.error(`[UserOp] Transaction REVERTED: ${redeemTx}`);
+    console.error(`[UserOp] Check: https://basescan.org/tx/${redeemTx}`);
     throw new Error(`Transaction reverted: ${redeemTx}`);
   }
 }
@@ -887,8 +906,332 @@ async function updateProtocolStats(volume: bigint, fees: bigint) {
   }
 }
 
-// ============ MAIN EXECUTION ============
+// ============ TWO-PHASE EXECUTION ============
 
+// Wallet data with balance info for swap processing
+interface WalletData {
+  delegation: DelegationRecord;
+  smartAccountAddress: Address;
+  balance: bigint;
+  swapAmount: bigint;
+  swapAmountAfterFee: bigint;
+  fee: bigint;
+}
+
+// Minimum balance required for a swap (in USDC decimals = 6, so 1 USDC = 1000000)
+const MIN_SWAP_AMOUNT = parseUnits('0.10', 6); // 10 cents minimum
+
+// Check if a smart account has USDC approved to Permit2
+async function checkUSDCApproval(smartAccountAddress: Address): Promise<boolean> {
+  try {
+    const allowance = await publicClient.readContract({
+      address: ADDRESSES.USDC,
+      abi: erc20Abi,
+      functionName: 'allowance',
+      args: [smartAccountAddress, ADDRESSES.PERMIT2],
+    });
+    return allowance > 0n;
+  } catch (error) {
+    console.error(`[Approval Check] Error for ${smartAccountAddress}:`, error);
+    return false; // Assume needs approval if check fails
+  }
+}
+
+// Check if a smart account has Permit2 allowance to Universal Router
+async function checkPermit2Allowance(smartAccountAddress: Address): Promise<boolean> {
+  try {
+    const result = await publicClient.readContract({
+      address: ADDRESSES.PERMIT2,
+      abi: permit2Abi,
+      functionName: 'allowance',
+      args: [smartAccountAddress, ADDRESSES.USDC, ADDRESSES.UNISWAP_ROUTER],
+    });
+    const amount = BigInt(result[0]);
+    const expiration = Number(result[1]);
+    const now = Math.floor(Date.now() / 1000);
+    return amount > 0n && expiration > now;
+  } catch (error) {
+    console.error(`[Permit2 Check] Error for ${smartAccountAddress}:`, error);
+    return false; // Assume needs approval if check fails
+  }
+}
+
+// Phase 1: Process all approvals sequentially to avoid nonce collisions
+async function processApprovals(delegations: DelegationRecord[], isBuy: boolean): Promise<void> {
+  const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH;
+  const tokenSymbol = isBuy ? 'USDC' : 'WETH';
+  
+  console.log(`\n[Phase 1] Scanning ${delegations.length} wallets for approval needs...`);
+  
+  interface ApprovalNeeds {
+    delegation: DelegationRecord;
+    smartAccountAddress: Address;
+    needsERC20: boolean;
+    needsPermit2: boolean;
+  }
+  
+  const needsApproval: ApprovalNeeds[] = [];
+  
+  // Parallel check for approval status (read-only, no nonce issues)
+  await Promise.all(delegations.map(async (delegation) => {
+    const smartAccountAddress = delegation.smart_account_address as Address;
+    
+    const [hasERC20Approval, hasPermit2Approval] = await Promise.all([
+      checkUSDCApproval(smartAccountAddress),
+      checkPermit2Allowance(smartAccountAddress),
+    ]);
+    
+    if (!hasERC20Approval || !hasPermit2Approval) {
+      needsApproval.push({
+        delegation,
+        smartAccountAddress,
+        needsERC20: !hasERC20Approval,
+        needsPermit2: !hasPermit2Approval,
+      });
+    }
+  }));
+  
+  console.log(`[Phase 1] ${needsApproval.length} wallets need approvals`);
+  
+  if (needsApproval.length === 0) {
+    console.log(`[Phase 1] All wallets already approved ✓`);
+    return;
+  }
+  
+  // Sequential approval submission (one at a time to avoid nonce collision)
+  for (const { delegation, smartAccountAddress, needsERC20, needsPermit2 } of needsApproval) {
+    console.log(`[Approval] Processing ${smartAccountAddress}...`);
+    
+    try {
+      // Step 1: ERC20 approve to Permit2
+      if (needsERC20) {
+        console.log(`[Approval] Setting ERC20 approval for ${tokenSymbol} to Permit2...`);
+        const maxApproval = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
+        const erc20ApproveTx = await executeDelegatedERC20Approval(
+          delegation,
+          tokenIn,
+          ADDRESSES.PERMIT2,
+          maxApproval
+        );
+        
+        if (!erc20ApproveTx) {
+          console.error(`[Approval] ❌ ERC20 approval failed for ${smartAccountAddress}`);
+          continue; // Move to next wallet, don't block others
+        }
+        console.log(`[Approval] ✅ ERC20 approval success: ${erc20ApproveTx}`);
+        
+        // Small delay to ensure nonce propagation
+        await sleep(1000);
+      }
+      
+      // Step 2: Permit2 internal allowance to Universal Router
+      if (needsPermit2) {
+        console.log(`[Approval] Setting Permit2 allowance to Universal Router...`);
+        const permit2ApproveTx = await executeDelegatedPermit2Approval(
+          delegation,
+          tokenIn,
+          ADDRESSES.UNISWAP_ROUTER
+        );
+        
+        if (!permit2ApproveTx) {
+          console.error(`[Approval] ❌ Permit2 approval failed for ${smartAccountAddress}`);
+          continue; // Move to next wallet, don't block others
+        }
+        console.log(`[Approval] ✅ Permit2 approval success: ${permit2ApproveTx}`);
+        
+        // Small delay to ensure nonce propagation
+        await sleep(1000);
+      }
+      
+      console.log(`[Approval] ✅ All approvals complete for ${smartAccountAddress}`);
+    } catch (error: any) {
+      console.error(`[Approval] ❌ Failed for ${smartAccountAddress}:`, error?.message || error);
+      // Continue with next wallet
+    }
+  }
+  
+  console.log(`[Phase 1] Approval phase complete`);
+}
+
+// Execute a single swap (assumes approvals are already done)
+async function executeSwapOnly(
+  delegation: DelegationRecord,
+  decision: DCADecision,
+  fgValue: number,
+  walletData: WalletData
+): Promise<ExecutionResult> {
+  const userAddress = delegation.user_address as Address;
+  const smartAccountAddress = walletData.smartAccountAddress;
+  
+  const isBuy = decision.action === 'buy';
+  const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH;
+  const tokenOut = isBuy ? ADDRESSES.WETH : ADDRESSES.USDC;
+  const tokenDecimals = isBuy ? 6 : 18;
+  const tokenSymbol = isBuy ? 'USDC' : 'ETH';
+  
+  let totalRetries = 0;
+  let lastErrorMessage: string | null = null;
+  let lastErrorType: ErrorType | null = null;
+  
+  // Get swap quote
+  const swapQuote = await getSwapQuote(
+    smartAccountAddress,
+    tokenIn,
+    tokenOut,
+    walletData.swapAmountAfterFee.toString()
+  );
+
+  if (!swapQuote) {
+    lastErrorMessage = 'Failed to get swap quote';
+    lastErrorType = 'network';
+    return {
+      success: false,
+      txHash: null,
+      error: lastErrorMessage,
+      errorType: lastErrorType,
+      amountIn: walletData.swapAmountAfterFee.toString(),
+      amountOut: '0',
+      feeCollected: '0',
+      retryCount: 3,
+      lastError: lastErrorMessage,
+    };
+  }
+
+  totalRetries += swapQuote.retryInfo.attempts - 1;
+
+  // Execute the delegated swap
+  const swapResult = await executeDelegatedSwap(
+    delegation,
+    decision.action as 'buy' | 'sell',
+    swapQuote.swap.to as Address,
+    swapQuote.swap.data as Hex,
+    BigInt(swapQuote.swap.value || '0')
+  );
+
+  totalRetries += swapResult.retryInfo.attempts - 1;
+
+  if (!swapResult.txHash) {
+    lastErrorMessage = swapResult.retryInfo.lastError?.message ?? 'Swap execution failed';
+    lastErrorType = swapResult.retryInfo.lastError?.type ?? 'unknown';
+    return {
+      success: false,
+      txHash: null,
+      error: lastErrorMessage,
+      errorType: lastErrorType,
+      amountIn: walletData.swapAmountAfterFee.toString(),
+      amountOut: swapQuote.quote.quote.output.amount,
+      feeCollected: '0',
+      retryCount: totalRetries,
+      lastError: lastErrorMessage,
+    };
+  }
+
+  console.log(`[Swap] ✅ ${smartAccountAddress}: ${formatUnits(walletData.swapAmountAfterFee, tokenDecimals)} ${tokenSymbol} -> ${formatUnits(BigInt(swapQuote.quote.quote.output.amount), isBuy ? 18 : 6)} ${isBuy ? 'ETH' : 'USDC'}`);
+
+  return {
+    success: true,
+    txHash: swapResult.txHash,
+    error: null,
+    errorType: null,
+    amountIn: walletData.swapAmountAfterFee.toString(),
+    amountOut: swapQuote.quote.quote.output.amount,
+    feeCollected: walletData.fee.toString(),
+    retryCount: totalRetries,
+    lastError: null,
+  };
+}
+
+// Phase 2: Process swaps in parallel batches
+async function processSwaps(
+  delegations: DelegationRecord[],
+  decision: DCADecision,
+  fgValue: number
+): Promise<{ results: ExecutionResult[]; walletDataMap: Map<string, WalletData> }> {
+  const isBuy = decision.action === 'buy';
+  const tokenDecimals = isBuy ? 6 : 18;
+  const tokenSymbol = isBuy ? 'USDC' : 'ETH';
+  
+  console.log(`\n[Phase 2] Preparing ${delegations.length} wallets for swaps...`);
+  
+  // First, gather balance info for all wallets (parallel reads)
+  const walletDataList: WalletData[] = [];
+  const walletDataMap = new Map<string, WalletData>();
+  
+  await Promise.all(delegations.map(async (delegation) => {
+    const smartAccountAddress = delegation.smart_account_address as Address;
+    
+    try {
+      const balance = isBuy 
+        ? await getUSDCBalance(smartAccountAddress)
+        : await getETHBalance(smartAccountAddress);
+      
+      if (balance < MIN_SWAP_AMOUNT) {
+        console.log(`[Phase 2] ${smartAccountAddress}: Insufficient balance (${formatUnits(balance, tokenDecimals)} ${tokenSymbol})`);
+        return;
+      }
+      
+      // Calculate swap amount
+      const percentage = BigInt(Math.floor(decision.percentage * 100));
+      let swapAmount = (balance * percentage) / 10000n;
+      
+      // Apply max amount limit
+      const maxAmount = BigInt(delegation.max_amount_per_swap);
+      if (swapAmount > maxAmount) {
+        swapAmount = maxAmount;
+      }
+      
+      const fee = calculateFee(swapAmount);
+      const swapAmountAfterFee = swapAmount - fee;
+      
+      const walletData: WalletData = {
+        delegation,
+        smartAccountAddress,
+        balance,
+        swapAmount,
+        swapAmountAfterFee,
+        fee,
+      };
+      
+      walletDataList.push(walletData);
+      walletDataMap.set(smartAccountAddress, walletData);
+    } catch (error) {
+      console.error(`[Phase 2] Error getting balance for ${smartAccountAddress}:`, error);
+    }
+  }));
+  
+  console.log(`[Phase 2] ${walletDataList.length} wallets eligible for swaps`);
+  
+  if (walletDataList.length === 0) {
+    return { results: [], walletDataMap };
+  }
+  
+  // Process swaps in parallel batches
+  const BATCH_SIZE = 10;
+  const results: ExecutionResult[] = [];
+  
+  for (let i = 0; i < walletDataList.length; i += BATCH_SIZE) {
+    const batch = walletDataList.slice(i, i + BATCH_SIZE);
+    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(walletDataList.length / BATCH_SIZE);
+    
+    console.log(`[Swap] Processing batch ${batchNum}/${totalBatches} (${batch.length} wallets)...`);
+    
+    const batchResults = await Promise.all(
+      batch.map(walletData => executeSwapOnly(walletData.delegation, decision, fgValue, walletData))
+    );
+    
+    results.push(...batchResults);
+    
+    // Pause between batches
+    if (i + BATCH_SIZE < walletDataList.length) {
+      await sleep(1000);
+    }
+  }
+  
+  return { results, walletDataMap };
+}
+
+// Legacy function for compatibility (still used for retries)
 async function processUserDCA(
   delegation: DelegationRecord,
   decision: DCADecision,
@@ -897,10 +1240,6 @@ async function processUserDCA(
   const userAddress = delegation.user_address as Address;
   const smartAccountAddress = delegation.smart_account_address as Address;
   
-  console.log(`\n--- Processing: ${userAddress} ---`);
-  console.log(`Smart Account: ${smartAccountAddress}`);
-  console.log(`Timestamp: ${new Date().toISOString()}`);
-
   // Track retry information across stages
   let totalRetries = 0;
   let lastErrorMessage: string | null = null;
@@ -913,7 +1252,7 @@ async function processUserDCA(
   const tokenDecimals = isBuy ? 6 : 18;
   const tokenSymbol = isBuy ? 'USDC' : 'ETH';
   
-  // Get balance from SMART ACCOUNT (not EOA) with retry
+  // Get balance from SMART ACCOUNT
   let balance: bigint;
   try {
     const { result: balanceResult, error: balanceError, attempts } = await withRetry(
@@ -927,7 +1266,6 @@ async function processUserDCA(
     if (balanceResult === null) {
       lastErrorMessage = balanceError?.message ?? 'Failed to fetch balance';
       lastErrorType = balanceError?.type ?? 'unknown';
-      await logFailedAttempt(delegation.id, userAddress, 'getBalance', balanceError!, { smartAccountAddress, tokenIn });
       return {
         success: false,
         txHash: null,
@@ -957,7 +1295,6 @@ async function processUserDCA(
   }
 
   if (balance === 0n) {
-    console.log(`No ${tokenSymbol} balance, skipping`);
     return {
       success: false,
       txHash: null,
@@ -971,143 +1308,18 @@ async function processUserDCA(
     };
   }
 
-  console.log(`Balance: ${formatUnits(balance, tokenDecimals)} ${tokenSymbol}`);
-
-  // Calculate swap amount (percentage of balance)
+  // Calculate swap amount
   const percentage = BigInt(Math.floor(decision.percentage * 100));
   let swapAmount = (balance * percentage) / 10000n;
-
-  // Apply max amount limit from delegation
   const maxAmount = BigInt(delegation.max_amount_per_swap);
   if (swapAmount > maxAmount) {
     swapAmount = maxAmount;
-    console.log(`Capped to max amount: ${formatUnits(maxAmount, tokenDecimals)}`);
   }
 
-  // Calculate fee (taken from input)
   const fee = calculateFee(swapAmount);
   const swapAmountAfterFee = swapAmount - fee;
 
-  console.log(`Swap: ${formatUnits(swapAmountAfterFee, tokenDecimals)} ${tokenSymbol} -> ${isBuy ? 'ETH' : 'USDC'}`);
-  console.log(`Fee: ${formatUnits(fee, tokenDecimals)} ${tokenSymbol}`);
-
-  // STEP 1: Check ERC20 approve to Permit2 contract
-  const { result: erc20Allowance, error: allowanceError } = await withRetry(
-    () => getTokenAllowance(tokenIn, smartAccountAddress, ADDRESSES.PERMIT2),
-    { operation: 'getERC20Allowance' }
-  );
-
-  if (erc20Allowance === null) {
-    lastErrorMessage = allowanceError?.message ?? 'Failed to check allowance';
-    lastErrorType = allowanceError?.type ?? 'unknown';
-    await logFailedAttempt(delegation.id, userAddress, 'getERC20Allowance', allowanceError!, { tokenIn, smartAccountAddress });
-    return {
-      success: false,
-      txHash: null,
-      error: lastErrorMessage,
-      errorType: lastErrorType,
-      amountIn: '0',
-      amountOut: '0',
-      feeCollected: '0',
-      retryCount: totalRetries,
-      lastError: lastErrorMessage,
-    };
-  }
-
-  if (erc20Allowance < swapAmount) {
-    console.log(`ERC20 allowance to Permit2: ${formatUnits(erc20Allowance, tokenDecimals)}, need: ${formatUnits(swapAmount, tokenDecimals)}`);
-    console.log('Executing ERC20 approve to Permit2...');
-    
-    const maxApproval = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
-    const erc20ApproveTx = await executeDelegatedERC20Approval(
-      delegation,
-      tokenIn,
-      ADDRESSES.PERMIT2,
-      maxApproval
-    );
-
-    if (!erc20ApproveTx) {
-      lastErrorMessage = 'Failed to ERC20 approve token for Permit2';
-      lastErrorType = 'revert';
-      await logFailedAttempt(delegation.id, userAddress, 'erc20Approval', 
-        { type: 'revert', message: lastErrorMessage, originalError: null, retryable: false },
-        { tokenIn, spender: ADDRESSES.PERMIT2 }
-      );
-      return {
-        success: false,
-        txHash: null,
-        error: lastErrorMessage,
-        errorType: lastErrorType,
-        amountIn: '0',
-        amountOut: '0',
-        feeCollected: '0',
-        retryCount: totalRetries,
-        lastError: lastErrorMessage,
-      };
-    }
-  } else {
-    console.log('ERC20 already approved for Permit2 ✓');
-  }
-
-  // STEP 2: Check Permit2 internal allowance to Universal Router
-  const { result: permit2Allowance, error: permit2AllowanceError } = await withRetry(
-    () => getPermit2Allowance(smartAccountAddress, tokenIn, ADDRESSES.UNISWAP_ROUTER),
-    { operation: 'getPermit2Allowance' }
-  );
-
-  if (permit2Allowance === null) {
-    lastErrorMessage = permit2AllowanceError?.message ?? 'Failed to check Permit2 allowance';
-    lastErrorType = permit2AllowanceError?.type ?? 'unknown';
-    await logFailedAttempt(delegation.id, userAddress, 'getPermit2Allowance', permit2AllowanceError!, { tokenIn, smartAccountAddress });
-    return {
-      success: false,
-      txHash: null,
-      error: lastErrorMessage,
-      errorType: lastErrorType,
-      amountIn: '0',
-      amountOut: '0',
-      feeCollected: '0',
-      retryCount: totalRetries,
-      lastError: lastErrorMessage,
-    };
-  }
-
-  const now = Math.floor(Date.now() / 1000);
-  if (permit2Allowance.amount < swapAmount || permit2Allowance.expiration < now) {
-    console.log(`Permit2 allowance: ${formatUnits(permit2Allowance.amount, tokenDecimals)}, exp: ${permit2Allowance.expiration}`);
-    console.log('Executing Permit2 internal approve...');
-    
-    const permit2ApproveTx = await executeDelegatedPermit2Approval(
-      delegation,
-      tokenIn,
-      ADDRESSES.UNISWAP_ROUTER
-    );
-
-    if (!permit2ApproveTx) {
-      lastErrorMessage = 'Failed to set Permit2 internal allowance';
-      lastErrorType = 'revert';
-      await logFailedAttempt(delegation.id, userAddress, 'permit2Approval', 
-        { type: 'revert', message: lastErrorMessage, originalError: null, retryable: false },
-        { tokenIn, spender: ADDRESSES.UNISWAP_ROUTER }
-      );
-      return {
-        success: false,
-        txHash: null,
-        error: lastErrorMessage,
-        errorType: lastErrorType,
-        amountIn: '0',
-        amountOut: '0',
-        feeCollected: '0',
-        retryCount: totalRetries,
-        lastError: lastErrorMessage,
-      };
-    }
-  } else {
-    console.log('Permit2 internal allowance OK ✓');
-  }
-
-  // Get swap quote (swapper is the smart account, not EOA)
-  console.log('Getting swap quote from Uniswap API...');
+  // Get swap quote
   const swapQuote = await getSwapQuote(
     smartAccountAddress,
     tokenIn,
@@ -1118,10 +1330,6 @@ async function processUserDCA(
   if (!swapQuote) {
     lastErrorMessage = 'Failed to get swap quote after retries';
     lastErrorType = 'network';
-    await logFailedAttempt(delegation.id, userAddress, 'getSwapQuote', 
-      { type: 'network', message: lastErrorMessage, originalError: null, retryable: true },
-      { tokenIn, tokenOut, amount: swapAmountAfterFee.toString() }
-    );
     return {
       success: false,
       txHash: null,
@@ -1130,16 +1338,14 @@ async function processUserDCA(
       amountIn: swapAmountAfterFee.toString(),
       amountOut: '0',
       feeCollected: '0',
-      retryCount: totalRetries + 3, // Max attempts from getSwapQuote
+      retryCount: totalRetries + 3,
       lastError: lastErrorMessage,
     };
   }
 
   totalRetries += swapQuote.retryInfo.attempts - 1;
-  console.log(`Quote received: ${formatUnits(BigInt(swapQuote.quote.quote.output.amount), isBuy ? 18 : 6)} ${isBuy ? 'ETH' : 'USDC'}`);
 
   // Execute the delegated swap
-  console.log('Executing delegated swap...');
   const swapResult = await executeDelegatedSwap(
     delegation,
     decision.action as 'buy' | 'sell',
@@ -1153,15 +1359,6 @@ async function processUserDCA(
   if (!swapResult.txHash) {
     lastErrorMessage = swapResult.retryInfo.lastError?.message ?? 'Swap execution failed';
     lastErrorType = swapResult.retryInfo.lastError?.type ?? 'unknown';
-    await logFailedAttempt(delegation.id, userAddress, 'executeDelegatedSwap', 
-      swapResult.retryInfo.lastError ?? { type: 'unknown', message: lastErrorMessage, originalError: null, retryable: false },
-      { 
-        swapTo: swapQuote.swap.to, 
-        swapValue: swapQuote.swap.value,
-        amountIn: swapAmountAfterFee.toString(),
-        expectedOut: swapQuote.quote.quote.output.amount,
-      }
-    );
     return {
       success: false,
       txHash: null,
@@ -1174,11 +1371,6 @@ async function processUserDCA(
       lastError: lastErrorMessage,
     };
   }
-
-  // Fee collection disabled for launch - swaps work, fees can be added later
-  // await collectFee(delegation, tokenIn, fee);
-  console.log(`Fee skipped for now: ${formatUnits(fee, tokenDecimals)} ${tokenSymbol}`);
-  console.log(`✓ Swap successful! TX: ${swapResult.txHash}`);
 
   return {
     success: true,
@@ -1195,14 +1387,14 @@ async function processUserDCA(
 
 async function runDCA() {
   console.log('========================================');
-  console.log('  Fear & Greed DCA Executor');
+  console.log('  Fear & Greed DCA Executor (Two-Phase)');
   console.log('========================================');
   console.log(`Time: ${new Date().toISOString()}`);
   console.log(`Backend: ${backendAccount.address}`);
 
   // Check backend has gas
   const backendBalance = await getETHBalance(backendAccount.address);
-  console.log(`Backend ETH: ${formatUnits(backendBalance, 18)}`);
+  console.log(`Backend ETH: ${formatUnits(backendBalance, 18)} ETH`);
   
   if (backendBalance < parseUnits('0.001', 18)) {
     console.error('Backend wallet needs more ETH for gas!');
@@ -1231,81 +1423,55 @@ async function runDCA() {
     return;
   }
 
-  // 4. Process delegations in parallel batches for scalability
-  // With 10 concurrent, 500 wallets = ~50 batches = ~4 minutes instead of 40
-  const BATCH_SIZE = 10;
-  const MAX_RETRY_WALLETS = 20; // Don't retry more than 20 wallets at end
+  const isBuy = decision.action === 'buy';
+  
+  // ========================================
+  // PHASE 1: Process approvals sequentially
+  // ========================================
+  await processApprovals(delegations, isBuy);
+  
+  // ========================================
+  // PHASE 2: Process swaps in parallel
+  // ========================================
+  const { results, walletDataMap } = await processSwaps(delegations, decision, fg.value);
+  
+  // Log results to database
   let totalVolume = 0n;
   let totalFees = 0n;
   let successCount = 0;
-  const failedDelegations: { delegation: typeof delegations[0]; error: string }[] = [];
-
-  console.log(`\nProcessing ${delegations.length} delegations in batches of ${BATCH_SIZE}...`);
-
-  for (let i = 0; i < delegations.length; i += BATCH_SIZE) {
-    const batch = delegations.slice(i, i + BATCH_SIZE);
-    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-    const totalBatches = Math.ceil(delegations.length / BATCH_SIZE);
+  const failedDelegations: { delegation: DelegationRecord; error: string }[] = [];
+  
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    const walletDataArray = Array.from(walletDataMap.values());
+    const walletData = walletDataArray[i];
     
-    console.log(`\n[Batch ${batchNum}/${totalBatches}] Processing ${batch.length} wallets...`);
-
-    const results = await Promise.all(
-      batch.map(async (delegation) => {
-        try {
-          const result = await processUserDCA(delegation, decision, fg.value);
-          
-          // Log to database
-          await logExecution(delegation.id, delegation.user_address, fg.value, decision, result);
-          
-          // Track failures for end-of-run retry (only retryable errors)
-          if (!result.success && result.errorType && ['network', 'timeout', 'rate_limit', 'quote_expired'].includes(result.errorType)) {
-            failedDelegations.push({ delegation, error: result.error || 'Unknown error' });
-          }
-          
-          return result;
-        } catch (error) {
-          console.error(`Failed to process ${delegation.smart_account_address}:`, error);
-          const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-          
-          // Log the failure
-          await logExecution(delegation.id, delegation.user_address, fg.value, decision, {
-            success: false,
-            reason: errorMsg,
-            amountIn: '0',
-            amountOut: '0',
-            feeCollected: '0',
-          });
-          
-          // Track for retry
-          failedDelegations.push({ delegation, error: errorMsg });
-          
-          return { success: false, amountIn: '0', amountOut: '0', feeCollected: '0' };
-        }
-      })
-    );
-
-    // Aggregate results
-    for (const result of results) {
+    if (walletData) {
+      await logExecution(
+        walletData.delegation.id, 
+        walletData.delegation.user_address, 
+        fg.value, 
+        decision, 
+        result
+      );
+      
       if (result.success) {
         successCount++;
         totalVolume += BigInt(result.amountIn);
         totalFees += BigInt(result.feeCollected);
+      } else if (result.errorType && ['network', 'timeout', 'rate_limit', 'quote_expired'].includes(result.errorType)) {
+        failedDelegations.push({ delegation: walletData.delegation, error: result.error || 'Unknown error' });
       }
-    }
-
-    // Small delay between batches to avoid rate limits
-    if (i + BATCH_SIZE < delegations.length) {
-      await sleep(1000);
     }
   }
 
-  // 4b. End-of-run retry for failed wallets (network/timeout errors only)
+  // End-of-run retry for failed wallets (network/timeout errors only)
+  const MAX_RETRY_WALLETS = 20;
   if (failedDelegations.length > 0 && failedDelegations.length <= MAX_RETRY_WALLETS) {
     console.log(`\n========================================`);
     console.log(`  Retrying ${failedDelegations.length} failed wallets...`);
     console.log(`========================================`);
     
-    // Wait 30 seconds for any rate limits to clear
     console.log('Waiting 30s before retry...');
     await sleep(30000);
     
@@ -1314,8 +1480,6 @@ async function runDCA() {
       
       try {
         const result = await processUserDCA(delegation, decision, fg.value);
-        
-        // Log retry result (overwrites previous failure)
         await logExecution(delegation.id, delegation.user_address, fg.value, decision, result);
         
         if (result.success) {
@@ -1330,20 +1494,18 @@ async function runDCA() {
         console.error(`[RETRY] ✗ Exception:`, err);
       }
       
-      // Small delay between retries
       await sleep(2000);
     }
   } else if (failedDelegations.length > MAX_RETRY_WALLETS) {
-    console.log(`\n⚠️ ${failedDelegations.length} wallets failed - too many to retry (max ${MAX_RETRY_WALLETS})`);
-    console.log('These will be retried in the next daily run.');
+    console.log(`\n⚠️ ${failedDelegations.length} wallets failed - too many to retry`);
   }
 
-  // 5. Update protocol stats
+  // Update protocol stats
   if (totalVolume > 0n) {
     await updateProtocolStats(totalVolume, totalFees);
   }
 
-  // 6. Summary
+  // Summary
   console.log('\n========================================');
   console.log('  Execution Summary');
   console.log('========================================');
