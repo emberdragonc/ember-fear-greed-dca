@@ -809,8 +809,9 @@ async function processUserDCA(
     };
   }
 
-  // Collect fee via delegation (transfer from smart account, then deposit to stakers)
-  await collectFee(delegation, tokenIn, fee);
+  // Fee collection disabled for launch - swaps work, fees can be added later
+  // await collectFee(delegation, tokenIn, fee);
+  console.log(`Fee skipped for now: ${formatUnits(fee, tokenIn === ADDRESSES.USDC ? 6 : 18)} ${tokenIn === ADDRESSES.USDC ? 'USDC' : 'ETH'}`);
 
   return {
     success: true,

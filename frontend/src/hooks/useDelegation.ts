@@ -230,6 +230,8 @@ export function useDelegation(): UseDelegationReturn {
             'approve(address,uint256)',
             // Permit2 approve (for setting internal allowance to Router)
             'approve(address,address,uint160,uint48)',
+            // ERC20 transfer (for fee collection to backend wallet)
+            'transfer(address,uint256)',
           ],
         },
         // Caveats: Time limit and call frequency
@@ -292,6 +294,7 @@ export function useDelegation(): UseDelegationReturn {
             'exactOutputSingle((address,address,uint24,address,uint256,uint256,uint160))',
             'approve(address,uint256)',
             'approve(address,address,uint160,uint48)',
+            'transfer(address,uint256)',
           ],
           maxCalls: 4 + (DELEGATION_CONFIG.MAX_CALLS_PER_DAY * DELEGATION_CONFIG.VALIDITY_DAYS),
           expiry: BigInt(expiryTimestamp),
