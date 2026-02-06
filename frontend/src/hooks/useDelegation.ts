@@ -219,8 +219,8 @@ export function useDelegation(): UseDelegationReturn {
         caveats: [
           { 
             type: 'timestamp', 
-            afterThreshold: BigInt(now), 
-            beforeThreshold: BigInt(expiryTimestamp) 
+            afterThreshold: now, 
+            beforeThreshold: expiryTimestamp 
           },
           { 
             type: 'limitedCalls', 
