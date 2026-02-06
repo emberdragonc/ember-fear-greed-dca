@@ -7,6 +7,7 @@
     "setup-db": "psql $DATABASE_URL -f schema.sql"
   },
   "dependencies": {
+    "@metamask/smart-accounts-kit": "^0.3.0",
     "@supabase/supabase-js": "^2.39.0",
     "viem": "^2.21.0"
   },

@@ -16,6 +16,8 @@ import {
 import { base } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 import { createClient } from '@supabase/supabase-js';
+import { createExecution, ExecutionMode } from '@metamask/smart-accounts-kit';
+import { DelegationManager } from '@metamask/smart-accounts-kit/contracts';
 
 // ============ CONFIG ============
 
@@ -251,49 +253,35 @@ async function executeDelegatedSwap(
   swapValue: bigint
 ): Promise<string | null> {
   try {
-    // Parse the stored delegation data
-    const delegationData = JSON.parse(delegation.delegation_data);
+    // Parse the stored delegation data (handle both string and object)
+    const signedDelegation = typeof delegation.delegation_data === 'string' 
+      ? JSON.parse(delegation.delegation_data) 
+      : delegation.delegation_data;
     
-    // Encode the execution for the swap
-    // The execution is: call the Uniswap router with the swap data
-    const execution = {
+    // Validate the signed delegation has the required fields
+    if (!signedDelegation.signature) {
+      console.error('Delegation missing signature');
+      return null;
+    }
+
+    // Create the execution struct using the SDK
+    const execution = createExecution({
       target: swapTo,
       value: swapValue,
       callData: swapData,
-    };
-
-    // Encode execution as bytes
-    const executionEncoded = encodeFunctionData({
-      abi: [{
-        name: 'execute',
-        type: 'function',
-        inputs: [
-          { name: 'target', type: 'address' },
-          { name: 'value', type: 'uint256' },
-          { name: 'callData', type: 'bytes' },
-        ],
-        outputs: [],
-      }],
-      functionName: 'execute',
-      args: [execution.target, execution.value, execution.callData],
     });
 
-    // For now, we'll use a simplified approach:
-    // The backend calls the DelegationManager.redeemDelegations
-    // This requires the delegation to be properly formatted
-    
-    // Build the redeemDelegations call
+    // Encode the redeemDelegations call using the SDK
+    const redeemCalldata = DelegationManager.encode.redeemDelegations({
+      delegations: [[signedDelegation]],
+      modes: [ExecutionMode.SingleDefault],
+      executions: [[execution]],
+    });
+
+    // Send transaction via backend wallet (EOA redemption)
     const redeemTx = await walletClient.sendTransaction({
       to: ADDRESSES.DELEGATION_MANAGER,
-      data: encodeFunctionData({
-        abi: delegationManagerAbi,
-        functionName: 'redeemDelegations',
-        args: [
-          [[delegationData.encoded]], // delegations (nested array)
-          [0], // modes (0 = SingleDefault)
-          [[executionEncoded]], // executions (nested array)
-        ],
-      }),
+      data: redeemCalldata,
       gas: 500000n,
     });
 
@@ -372,7 +360,7 @@ async function logExecution(
   result: ExecutionResult
 ) {
   const { error } = await supabase.from('dca_executions').insert({
-    delegation_id: delegationId,
+    // delegation_id: delegationId, // Column doesn't exist yet
     user_address: userAddress,
     fear_greed_index: fgValue,
     action: decision.action,
