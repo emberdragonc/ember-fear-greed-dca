@@ -263,7 +263,10 @@ export function TotalBalanceCard() {
       {/* Deposit Form */}
       {showDeposit && (
         <div className="mb-4 p-3 bg-blue-500/10 rounded-xl border border-blue-500/20">
-          <p className="text-xs text-blue-400 mb-2">Deposit from your EOA to Smart Wallet</p>
+          <div className="flex items-center gap-2 mb-2">
+            <p className="text-xs text-blue-400">Deposit from your EOA to Smart Wallet</p>
+            <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">Base</span>
+          </div>
           <div className="flex gap-2 mb-2">
             <select
               value={depositToken}

@@ -197,7 +197,10 @@ export function FundWallet({ onFunded }: FundWalletProps) {
       {/* Deposit Form */}
       {!isFunded && (
         <div className="mb-4 p-4 bg-blue-500/10 rounded-xl border border-blue-500/20">
-          <p className="text-sm text-blue-300 mb-3 font-medium">Deposit from your wallet</p>
+          <div className="flex items-center gap-2 mb-3">
+            <p className="text-sm text-blue-300 font-medium">Deposit from your wallet</p>
+            <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">Base</span>
+          </div>
           <div className="flex gap-2 mb-3">
             <select
               value={depositToken}
@@ -223,7 +226,7 @@ export function FundWallet({ onFunded }: FundWalletProps) {
             </button>
           </div>
           <p className="text-xs text-blue-400/70">
-            Deposits ETH or USDC directly from your connected wallet to your smart wallet.
+            ⚠️ Make sure you're on <span className="font-semibold text-blue-300">Base network</span>. Deposits ETH or USDC from your wallet to your smart wallet.
           </p>
         </div>
       )}
