@@ -2,9 +2,10 @@ name: Daily DCA Executor
 
 on:
   schedule:
-    # TEMPORARY: Testing scheduled run at 16:57 UTC on Feb 7, 2026
+    # TEMPORARY: Testing scheduled run at 18:00 UTC on Feb 7, 2026
     # Will revert to '0 12 * * *' after test
-    - cron: '57 16 * * *'
+    # Note: GitHub Actions needs ~1hr to recognize new schedules
+    - cron: '0 18 * * *'
   workflow_dispatch:
     # Allow manual triggers for testing
 
