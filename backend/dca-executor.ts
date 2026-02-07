@@ -634,6 +634,7 @@ async function getETHPriceFromUniswap(): Promise<number> {
 
   try {
     // Get a quote for 1 USDC -> WETH to derive ETH price
+    // Using 0.5% slippage for consistency with our slippage configuration
     const quoteRes = await fetch(`${TRADING_API}/quote`, {
       method: 'POST',
       headers: {
@@ -648,7 +649,7 @@ async function getETHPriceFromUniswap(): Promise<number> {
         tokenOutChainId: CHAIN_ID,
         amount: '1000000', // 1 USDC (6 decimals)
         type: 'EXACT_INPUT',
-        slippageTolerance: 1,
+        slippageTolerance: 0.5, // M4 Fix: Use 0.5% instead of 1%
       }),
     });
 
@@ -1273,6 +1274,11 @@ async function getSwapQuoteInternal(
   }
 
   const swapData = await swapRes.json();
+  
+  // H5 Fix: Validate router is in whitelist before returning
+  validateSwapQuote({ swap: swapData.swap });
+  console.log(`[Quote API] Router whitelist check passed: ${swapData.swap.to}`);
+  
   console.log(`[Quote API] Swap data received successfully`);
   return { quote: quoteData, swap: swapData.swap };
 }
@@ -1588,17 +1594,33 @@ async function collectFee(
 
 // ============ DATABASE ============
 
-async function getActiveDelegations(): Promise<DelegationRecord[]> {
-  const { data, error } = await supabase
-    .from('delegations')
-    .select('*')
-    .gt('expires_at', new Date().toISOString());
+// H3 Fix: Retry configuration for DB operations
+const DB_RETRY_CONFIG: Partial<RetryConfig> = {
+  maxAttempts: 3,
+  baseDelayMs: 500,
+  maxDelayMs: 5000,
+  operation: 'database',
+};
 
-  if (error) {
-    console.error('Database error:', error);
+async function getActiveDelegations(): Promise<DelegationRecord[]> {
+  const { result, error } = await withRetry(
+    async () => {
+      const { data, error } = await supabase
+        .from('delegations')
+        .select('*')
+        .gt('expires_at', new Date().toISOString());
+      
+      if (error) throw error;
+      return data || [];
+    },
+    { ...DB_RETRY_CONFIG, operation: 'getActiveDelegations' }
+  );
+
+  if (error || result === null) {
+    console.error('[DB] Failed to fetch delegations after retries:', error?.message);
     return [];
   }
-  return data || [];
+  return result;
 }
 
 async function logExecution(
@@ -1608,31 +1630,39 @@ async function logExecution(
   decision: DCADecision,
   result: ExecutionResult
 ) {
-  const { error } = await supabase.from('dca_executions').insert({
-    user_address: userAddress,
-    fear_greed_index: fgValue,
-    action: decision.action,
-    amount_in: result.amountIn,
-    amount_out: result.amountOut,
-    fee_collected: result.feeCollected,
-    tx_hash: result.txHash,
-    status: result.success ? 'success' : 'failed',
-    error_message: result.error,
-    error_type: result.errorType,
-    retry_count: result.retryCount,
-    last_error: result.lastError,
-    created_at: new Date().toISOString(),
-  });
+  const { error, attempts } = await withRetry(
+    async () => {
+      const { error } = await supabase.from('dca_executions').insert({
+        user_address: userAddress,
+        fear_greed_index: fgValue,
+        action: decision.action,
+        amount_in: result.amountIn,
+        amount_out: result.amountOut,
+        fee_collected: result.feeCollected,
+        tx_hash: result.txHash,
+        status: result.success ? 'success' : 'failed',
+        error_message: result.error,
+        error_type: result.errorType,
+        retry_count: result.retryCount,
+        last_error: result.lastError,
+        created_at: new Date().toISOString(),
+      });
+      
+      if (error) throw error;
+    },
+    { ...DB_RETRY_CONFIG, operation: 'logExecution' }
+  );
 
   if (error) {
-    console.error('Failed to log execution:', error);
-    console.log('Execution details for manual debugging:', JSON.stringify({
+    console.error(`[DB] Failed to log execution after ${attempts} attempts:`, error.message);
+    console.error('[DB] Execution details for manual recovery:', JSON.stringify({
       delegationId,
       userAddress,
       fgValue,
       decision,
       result,
     }, null, 2));
+    // Don't throw - executor should continue even if logging fails
   }
 }
 
@@ -1650,34 +1680,47 @@ async function logFailedAttempt(
     context,
   });
 
-  try {
-    const { error } = await supabase.from('dca_failed_attempts').insert({
-      delegation_id: delegationId,
-      user_address: userAddress,
-      stage,
-      error_type: errorInfo.type,
-      error_message: errorInfo.message,
-      retryable: errorInfo.retryable,
-      context: JSON.stringify(context),
-      created_at: new Date().toISOString(),
-    });
+  const { error, attempts } = await withRetry(
+    async () => {
+      const { error } = await supabase.from('dca_failed_attempts').insert({
+        delegation_id: delegationId,
+        user_address: userAddress,
+        stage,
+        error_type: errorInfo.type,
+        error_message: errorInfo.message,
+        retryable: errorInfo.retryable,
+        context: JSON.stringify(context),
+        created_at: new Date().toISOString(),
+      });
+      
+      if (error) throw error;
+    },
+    { ...DB_RETRY_CONFIG, operation: 'logFailedAttempt' }
+  );
 
-    if (error) {
-      console.log('Note: dca_failed_attempts table may need to be created');
-    }
-  } catch {
-    console.log('Note: Failed to insert into dca_failed_attempts table');
+  if (error) {
+    console.error(`[DB] Failed to log failed attempt after ${attempts} attempts:`, error.message);
+    // Don't throw - this is auxiliary logging
   }
 }
 
 async function updateProtocolStats(volume: bigint, fees: bigint) {
-  const { error } = await supabase.rpc('increment_protocol_stats', {
-    volume_delta: volume.toString(),
-    fees_delta: fees.toString(),
-  });
+  const { error, attempts } = await withRetry(
+    async () => {
+      const { error } = await supabase.rpc('increment_protocol_stats', {
+        volume_delta: volume.toString(),
+        fees_delta: fees.toString(),
+      });
+      
+      if (error) throw error;
+    },
+    { ...DB_RETRY_CONFIG, operation: 'updateProtocolStats' }
+  );
 
   if (error) {
-    console.error('Failed to update stats:', error);
+    console.error(`[DB] Failed to update protocol stats after ${attempts} attempts:`, error.message);
+    console.error('[DB] Stats that failed to update:', { volume: volume.toString(), fees: fees.toString() });
+    // Don't throw - stats update failure shouldn't crash the executor
   }
 }
 
@@ -2283,7 +2326,8 @@ async function buildUserOpForSwap(
 async function executeSwapWithUserOp(
   walletData: WalletData,
   decision: DCADecision,
-  nonceKey: bigint
+  nonceKey: bigint,
+  ethPriceUsd?: number
 ): Promise<ExecutionResult> {
   const { delegation, smartAccountAddress, swapAmountAfterFee, fee } = walletData;
 
@@ -2293,14 +2337,22 @@ async function executeSwapWithUserOp(
   const tokenDecimals = isBuy ? 6 : 18;
   const tokenSymbol = isBuy ? 'USDC' : 'ETH';
 
+  // C4/M4 Fix: Calculate dynamic slippage based on swap value
+  const price = ethPriceUsd ?? _cachedEthPriceUsd ?? 2500;
+  const swapValueUsd = calculateSwapValueUsd(swapAmountAfterFee, isBuy, price);
+  const slippageBps = getSlippageBpsForSwap(swapValueUsd);
+
+  console.log(`[Swap] ${smartAccountAddress}: Swap value $${swapValueUsd.toFixed(2)} -> slippage ${slippageBps/100}%`);
+
   let totalRetries = 0;
 
-  // Get swap quote
+  // Get swap quote with dynamic slippage
   const swapQuote = await getSwapQuote(
     smartAccountAddress,
     tokenIn,
     tokenOut,
-    swapAmountAfterFee.toString()
+    swapAmountAfterFee.toString(),
+    slippageBps
   );
 
   if (!swapQuote) {
@@ -2472,7 +2524,8 @@ async function processSwapsParallel(
         const globalIndex = batchIndex + index;
         // FIX C2: Deterministic nonce derivation to prevent collisions
         const nonceKey = PHASE2_TIMESTAMP * 1000000n + BigInt(globalIndex);
-        return prepareSwap(walletData, decision, nonceKey);
+        // C4/M4 Fix: Pass ethPriceUsd for dynamic slippage calculation
+        return prepareSwap(walletData, decision, nonceKey, ethPriceUsd);
       })
     );
 
@@ -2713,11 +2766,19 @@ async function processUserDCA(
   const fee = calculateFee(swapAmount);
   const swapAmountAfterFee = swapAmount - fee;
 
+  // C4/M4 Fix: Calculate dynamic slippage based on swap value
+  const price = _cachedEthPriceUsd ?? 2500;
+  const swapValueUsd = calculateSwapValueUsd(swapAmountAfterFee, isBuy, price);
+  const slippageBps = getSlippageBpsForSwap(swapValueUsd);
+
+  console.log(`[Retry] ${smartAccountAddress}: Swap value $${swapValueUsd.toFixed(2)} -> slippage ${slippageBps/100}%`);
+
   const swapQuote = await getSwapQuote(
     smartAccountAddress,
     tokenIn,
     tokenOut,
-    swapAmountAfterFee.toString()
+    swapAmountAfterFee.toString(),
+    slippageBps
   );
 
   if (!swapQuote) {
@@ -2806,12 +2867,18 @@ async function runDCA() {
   const smartAccountBalance = await getETHBalance(backendSmartAccount.address);
   console.log(`Smart Account ETH: ${formatUnits(smartAccountBalance, 18)} ETH`);
 
-  // 1. Fetch Fear & Greed
+  // 1. Fetch Fear & Greed (C5: With redundancy and staleness check)
   const fg = await fetchFearGreed();
-  console.log(`\nFear & Greed: ${fg.value} (${fg.classification})`);
+
+  if (fg) {
+    const sourceLabel = fg.source === 'backup' ? ' [BACKUP ORACLE]' : '';
+    console.log(`\nFear & Greed: ${fg.value} (${fg.classification})${sourceLabel}`);
+  } else {
+    console.log('\nFear & Greed: UNAVAILABLE - Both primary and backup sources failed');
+  }
 
   // 2. Calculate decision
-  const decision = calculateDecision(fg.value);
+  const decision = calculateDecision(fg);
   console.log(`Decision: ${decision.reason}`);
 
   if (decision.action === 'hold') {
@@ -2893,7 +2960,7 @@ async function runDCA() {
   // ========================================
   // PHASE 2: Process swaps via PARALLEL UserOps
   // ========================================
-  const { results, walletDataMap } = await processSwapsParallel(delegations, decision, fg.value);
+  const { results, walletDataMap } = await processSwapsParallel(delegations, decision, fg?.value ?? 50);
 
   // Log results to database
   let totalVolume = 0n;
@@ -2910,7 +2977,7 @@ async function runDCA() {
       await logExecution(
         walletData.delegation.id,
         walletData.delegation.user_address,
-        fg.value,
+        fg?.value ?? 50,
         decision,
         result
       );
@@ -2939,8 +3006,8 @@ async function runDCA() {
       console.log(`\n[RETRY] ${delegation.smart_account_address} (previous error: ${error})`);
 
       try {
-        const result = await processUserDCA(delegation, decision, fg.value);
-        await logExecution(delegation.id, delegation.user_address, fg.value, decision, result);
+        const result = await processUserDCA(delegation, decision, fg?.value ?? 50);
+        await logExecution(delegation.id, delegation.user_address, fg?.value ?? 50, decision, result);
 
         if (result.success) {
           successCount++;
