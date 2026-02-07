@@ -593,7 +593,7 @@ async function simulateSwap(
           data: encodeFunctionData({
             abi: erc20Abi,
             functionName: 'transfer',
-            args: [ADDRESSES.UNIVERSAL_ROUTER, amountIn]
+            args: [ADDRESSES.UNISWAP_ROUTER, amountIn]
           })
         }]
       })
