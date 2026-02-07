@@ -564,12 +564,25 @@ function calculateDecision(fgValue: number): DCADecision {
 
 // ============ DRY-RUN SIMULATION ============
 
+const MIN_WALLET_VALUE_USD = 5; // Minimum total wallet value to qualify for swaps
+
 interface SimulationResult {
   wallet: string;
+  totalValueUsd: string;
   balance: string;
   amountToSwap: string;
   status: 'PASS' | 'FAIL' | 'SKIP';
   reason?: string;
+}
+
+async function getETHPriceUSD(): Promise<number> {
+  try {
+    const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
+    const data = await response.json();
+    return data.ethereum?.usd || 2500; // Fallback to $2500 if API fails
+  } catch {
+    return 2500; // Fallback
+  }
 }
 
 async function simulateSwap(
@@ -626,6 +639,11 @@ async function runDryRunSimulation(
   console.log('========================================');
   console.log('Simulating swaps without executing...\n');
 
+  // Fetch ETH price once for all calculations
+  const ethPriceUsd = await getETHPriceUSD();
+  console.log(`ETH Price: $${ethPriceUsd.toFixed(2)}`);
+  console.log(`Min wallet value: $${MIN_WALLET_VALUE_USD}\n`);
+
   const results: SimulationResult[] = [];
   const isBuy = decision.action === 'buy';
 
@@ -636,6 +654,24 @@ async function runDryRunSimulation(
     const usdcBalance = await getUSDCBalance(userSmartAccount);
     const ethBalance = await getETHBalance(userSmartAccount);
     
+    // Calculate TOTAL wallet value in USD
+    const usdcValueUsd = Number(formatUnits(usdcBalance, 6));
+    const ethValueUsd = Number(formatUnits(ethBalance, 18)) * ethPriceUsd;
+    const totalValueUsd = usdcValueUsd + ethValueUsd;
+    
+    // Skip if total wallet value < $5
+    if (totalValueUsd < MIN_WALLET_VALUE_USD) {
+      results.push({
+        wallet: userSmartAccount.slice(0, 10),
+        totalValueUsd: totalValueUsd.toFixed(2),
+        balance: isBuy ? formatUnits(usdcBalance, 6) : formatUnits(ethBalance, 18),
+        amountToSwap: '0',
+        status: 'SKIP',
+        reason: `Total value $${totalValueUsd.toFixed(2)} < $${MIN_WALLET_VALUE_USD} min`
+      });
+      continue;
+    }
+    
     const sourceBalance = isBuy ? usdcBalance : ethBalance;
     const sourceDecimals = isBuy ? 6 : 18;
     const sourceSymbol = isBuy ? 'USDC' : 'ETH';
@@ -644,16 +680,17 @@ async function runDryRunSimulation(
     const percentage = decision.percentage;
     const amountToSwap = (sourceBalance * BigInt(Math.round(percentage * 100))) / 10000n;
     
-    // Check minimum amounts
+    // Check minimum amounts for the specific swap
     const minSwap = isBuy ? parseUnits('0.10', 6) : parseUnits('0.00005', 18);
     
     if (amountToSwap < minSwap) {
       results.push({
         wallet: userSmartAccount.slice(0, 10),
+        totalValueUsd: totalValueUsd.toFixed(2),
         balance: formatUnits(sourceBalance, sourceDecimals),
         amountToSwap: formatUnits(amountToSwap, sourceDecimals),
         status: 'SKIP',
-        reason: `Below minimum (${formatUnits(minSwap, sourceDecimals)} ${sourceSymbol})`
+        reason: `Swap amt below min (${formatUnits(minSwap, sourceDecimals)} ${sourceSymbol})`
       });
       continue;
     }
@@ -666,6 +703,7 @@ async function runDryRunSimulation(
     
     results.push({
       wallet: userSmartAccount.slice(0, 10),
+      totalValueUsd: totalValueUsd.toFixed(2),
       balance: formatUnits(sourceBalance, sourceDecimals),
       amountToSwap: formatUnits(amountToSwap, sourceDecimals),
       status: simulation.success ? 'PASS' : 'FAIL',
@@ -678,25 +716,30 @@ async function runDryRunSimulation(
 
   // Print results table
   console.log('\nSIMULATION RESULTS:');
-  console.log('----------------------------------------');
-  console.log('Wallet     | Balance    | To Swap   | Status');
-  console.log('----------------------------------------');
+  console.log('------------------------------------------------------------');
+  console.log('Wallet     | Total USD | Balance    | To Swap   | Status');
+  console.log('------------------------------------------------------------');
   
   let passCount = 0;
   let failCount = 0;
   let skipCount = 0;
+  let totalToSwap = 0;
   
   for (const r of results) {
     const statusEmoji = r.status === 'PASS' ? '✅' : r.status === 'FAIL' ? '❌' : '⏭️';
-    console.log(`${r.wallet} | ${r.balance.padStart(10)} | ${r.amountToSwap.padStart(9)} | ${statusEmoji} ${r.status}${r.reason ? ` (${r.reason})` : ''}`);
+    console.log(`${r.wallet} | $${r.totalValueUsd.padStart(8)} | ${r.balance.padStart(10)} | ${r.amountToSwap.padStart(9)} | ${statusEmoji} ${r.status}${r.reason ? ` (${r.reason})` : ''}`);
     
-    if (r.status === 'PASS') passCount++;
-    else if (r.status === 'FAIL') failCount++;
+    if (r.status === 'PASS') {
+      passCount++;
+      totalToSwap += Number(r.amountToSwap);
+    } else if (r.status === 'FAIL') failCount++;
     else skipCount++;
   }
   
-  console.log('----------------------------------------');
+  console.log('------------------------------------------------------------');
+  const swapSymbol = decision.action === 'buy' ? 'USDC' : 'ETH';
   console.log(`\nSUMMARY: ${passCount} PASS | ${failCount} FAIL | ${skipCount} SKIP`);
+  console.log(`Total to swap: ${totalToSwap.toFixed(6)} ${swapSymbol}`);
   
   if (failCount > 0) {
     console.log('\n⚠️ WARNING: Some wallets would FAIL - investigate before execution!');
@@ -1926,16 +1969,33 @@ async function processSwapsParallel(
   const walletDataList: WalletData[] = [];
   const walletDataMap = new Map<string, WalletData>();
 
+  // Fetch ETH price once for total value calculations
+  const ethPriceUsd = await getETHPriceUSD();
+  console.log(`[Phase 2] ETH Price: $${ethPriceUsd.toFixed(2)} | Min wallet value: $${MIN_WALLET_VALUE_USD}`);
+
   await Promise.all(delegations.map(async (delegation) => {
     const smartAccountAddress = delegation.smart_account_address as Address;
 
     try {
-      const balance = isBuy
-        ? await getUSDCBalance(smartAccountAddress)
-        : await getETHBalance(smartAccountAddress);
+      // Get both balances for total value check
+      const usdcBalance = await getUSDCBalance(smartAccountAddress);
+      const ethBalance = await getETHBalance(smartAccountAddress);
+      
+      // Calculate total wallet value in USD
+      const usdcValueUsd = Number(formatUnits(usdcBalance, 6));
+      const ethValueUsd = Number(formatUnits(ethBalance, 18)) * ethPriceUsd;
+      const totalValueUsd = usdcValueUsd + ethValueUsd;
+      
+      // Skip if total wallet value < $5
+      if (totalValueUsd < MIN_WALLET_VALUE_USD) {
+        console.log(`[Phase 2] ${smartAccountAddress}: Total value $${totalValueUsd.toFixed(2)} < $${MIN_WALLET_VALUE_USD} minimum`);
+        return;
+      }
+      
+      const balance = isBuy ? usdcBalance : ethBalance;
 
       if (balance < MIN_SWAP_AMOUNT) {
-        console.log(`[Phase 2] ${smartAccountAddress}: Insufficient balance (${formatUnits(balance, tokenDecimals)} ${tokenSymbol})`);
+        console.log(`[Phase 2] ${smartAccountAddress}: Insufficient ${tokenSymbol} balance (${formatUnits(balance, tokenDecimals)} ${tokenSymbol})`);
         return;
       }
 
