@@ -575,13 +575,58 @@ interface SimulationResult {
   reason?: string;
 }
 
-async function getETHPriceUSD(): Promise<number> {
+// Cached ETH price derived from Uniswap quote
+let _cachedEthPriceUsd: number | null = null;
+
+async function getETHPriceFromUniswap(): Promise<number> {
+  // Return cached price if available
+  if (_cachedEthPriceUsd !== null) {
+    return _cachedEthPriceUsd;
+  }
+
   try {
-    const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
-    const data = await response.json();
-    return data.ethereum?.usd || 2500; // Fallback to $2500 if API fails
-  } catch {
-    return 2500; // Fallback
+    // Get a quote for 1 USDC -> WETH to derive ETH price
+    const quoteRes = await fetch(`${TRADING_API}/quote`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.UNISWAP_API_KEY!,
+      },
+      body: JSON.stringify({
+        swapper: '0x0000000000000000000000000000000000000000',
+        tokenIn: ADDRESSES.USDC,
+        tokenOut: ADDRESSES.WETH,
+        tokenInChainId: CHAIN_ID,
+        tokenOutChainId: CHAIN_ID,
+        amount: '1000000', // 1 USDC (6 decimals)
+        type: 'EXACT_INPUT',
+        slippageTolerance: 1,
+      }),
+    });
+
+    if (!quoteRes.ok) {
+      throw new Error(`Quote API returned ${quoteRes.status}`);
+    }
+
+    const quoteData = await quoteRes.json();
+    const wethReceived = BigInt(quoteData.quote?.output?.amount || '0');
+
+    if (wethReceived === 0n) {
+      throw new Error('Invalid quote response');
+    }
+
+    // ethPrice = 1 / wethReceived (in 18 decimals)
+    // wethReceived is in 18 decimals, so: ethPrice = 1e18 / wethReceived
+    const ethPrice = Number(1e18) / Number(wethReceived);
+    _cachedEthPriceUsd = ethPrice;
+
+    console.log(`[ETH Price] Derived from Uniswap: $${ethPrice.toFixed(2)}`);
+    return ethPrice;
+  } catch (error) {
+    console.error('[ETH Price] Failed to get price from Uniswap:', error);
+    // Fallback to $2500
+    _cachedEthPriceUsd = 2500;
+    return 2500;
   }
 }
 
@@ -639,9 +684,9 @@ async function runDryRunSimulation(
   console.log('========================================');
   console.log('Simulating swaps without executing...\n');
 
-  // Fetch ETH price once for all calculations
-  const ethPriceUsd = await getETHPriceUSD();
-  console.log(`ETH Price: $${ethPriceUsd.toFixed(2)}`);
+  // Fetch ETH price from Uniswap for all calculations
+  const ethPriceUsd = await getETHPriceFromUniswap();
+  console.log(`ETH Price: $${ethPriceUsd.toFixed(2)} (derived from Uniswap)`);
   console.log(`Min wallet value: $${MIN_WALLET_VALUE_USD}\n`);
 
   const results: SimulationResult[] = [];
@@ -1597,6 +1642,10 @@ interface WalletData {
 
 const MIN_SWAP_AMOUNT = parseUnits('0.10', 6);
 
+// Batch processing configuration
+const OPTIMAL_BATCH_SIZE = 50;
+const BATCH_DELAY_MS = 500;
+
 // ============ APPROVAL CHECKING ============
 
 async function checkUSDCApproval(smartAccountAddress: Address): Promise<boolean> {
@@ -1969,8 +2018,8 @@ async function processSwapsParallel(
   const walletDataList: WalletData[] = [];
   const walletDataMap = new Map<string, WalletData>();
 
-  // Fetch ETH price once for total value calculations
-  const ethPriceUsd = await getETHPriceUSD();
+  // Fetch ETH price from Uniswap for total value calculations
+  const ethPriceUsd = await getETHPriceFromUniswap();
   console.log(`[Phase 2] ETH Price: $${ethPriceUsd.toFixed(2)} | Min wallet value: $${MIN_WALLET_VALUE_USD}`);
 
   await Promise.all(delegations.map(async (delegation) => {
@@ -2032,35 +2081,55 @@ async function processSwapsParallel(
     return { results: [], walletDataMap };
   }
 
-  // Generate base nonce key from timestamp
+  // Process swaps in batches of OPTIMAL_BATCH_SIZE
+  const allResults: ExecutionResult[] = [];
   const baseNonceKey = BigInt(Date.now());
   console.log(`[Phase 2] Base nonce key: ${baseNonceKey}`);
+  console.log(`[Phase 2] Processing in batches of ${OPTIMAL_BATCH_SIZE} with ${BATCH_DELAY_MS}ms delay between batches`);
 
-  // Process ALL swaps in parallel with unique nonce keys
-  console.log(`[Phase 2] Submitting ${walletDataList.length} UserOps in parallel...`);
+  for (let batchIndex = 0; batchIndex < walletDataList.length; batchIndex += OPTIMAL_BATCH_SIZE) {
+    const batch = walletDataList.slice(batchIndex, batchIndex + OPTIMAL_BATCH_SIZE);
+    const isLastBatch = batchIndex + OPTIMAL_BATCH_SIZE >= walletDataList.length;
+    const batchNum = Math.floor(batchIndex / OPTIMAL_BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(walletDataList.length / OPTIMAL_BATCH_SIZE);
 
-  const results = await Promise.all(
-    walletDataList.map((walletData, index) => {
-      const nonceKey = baseNonceKey + BigInt(index);
-      console.log(`[Phase 2] Wallet ${index + 1}/${walletDataList.length} (${walletData.smartAccountAddress}) → nonce key ${nonceKey}`);
+    console.log(`\n[Phase 2] Batch ${batchNum}/${totalBatches}: Processing ${batch.length} wallets...`);
 
-      return executeSwapWithUserOp(walletData, decision, nonceKey)
-        .then(result => result)
-        .catch(error => ({
-          success: false,
-          txHash: null,
-          error: error.message,
-          errorType: 'unknown' as ErrorType,
-          amountIn: walletData.swapAmountAfterFee.toString(),
-          amountOut: '0',
-          feeCollected: '0',
-          retryCount: 0,
-          lastError: error.message,
-        }));
-    })
-  );
+    // Process current batch in parallel
+    const batchResults = await Promise.all(
+      batch.map((walletData, index) => {
+        const globalIndex = batchIndex + index;
+        const nonceKey = baseNonceKey + BigInt(globalIndex);
+        console.log(`[Phase 2] Wallet ${globalIndex + 1}/${walletDataList.length} (${walletData.smartAccountAddress}) → nonce key ${nonceKey}`);
 
-  return { results, walletDataMap };
+        return executeSwapWithUserOp(walletData, decision, nonceKey)
+          .then(result => result)
+          .catch(error => ({
+            success: false,
+            txHash: null,
+            error: error.message,
+            errorType: 'unknown' as ErrorType,
+            amountIn: walletData.swapAmountAfterFee.toString(),
+            amountOut: '0',
+            feeCollected: '0',
+            retryCount: 0,
+            lastError: error.message,
+          }));
+      })
+    );
+
+    allResults.push(...batchResults);
+
+    // Delay between batches (except after last batch)
+    if (!isLastBatch) {
+      console.log(`[Phase 2] Batch ${batchNum} complete. Waiting ${BATCH_DELAY_MS}ms before next batch...`);
+      await sleep(BATCH_DELAY_MS);
+    }
+  }
+
+  console.log(`\n[Phase 2] All ${walletDataList.length} swaps processed`);
+
+  return { results: allResults, walletDataMap };
 }
 
 // Legacy function for compatibility (retries)
