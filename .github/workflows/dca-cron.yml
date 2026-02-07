@@ -2,8 +2,9 @@ name: Daily DCA Executor
 
 on:
   schedule:
-    # Run daily at 12:00 UTC (when most of the world is awake)
-    - cron: '0 12 * * *'
+    # TEMPORARY: Testing scheduled run at 16:57 UTC on Feb 7, 2026
+    # Will revert to '0 12 * * *' after test
+    - cron: '57 16 * * *'
   workflow_dispatch:
     # Allow manual triggers for testing
 
