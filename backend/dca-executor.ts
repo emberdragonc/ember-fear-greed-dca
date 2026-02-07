@@ -1942,13 +1942,19 @@ async function runDCA() {
   // Filter out delegations with outdated delegate addresses
   const EXPECTED_DELEGATE = '0xc472e866045d2e9ABd2F2459cE3BDB275b72C7e1'.toLowerCase();
   const delegations = allDelegations.filter(d => {
-    if (!d.delegate) {
-      console.log(`[Skip] Wallet ${d.user_address} has no delegate field, skipping`);
+    // Parse delegation_data to get the delegate address
+    const signedDelegation = typeof d.delegation_data === 'string'
+      ? JSON.parse(d.delegation_data)
+      : d.delegation_data;
+    const delegate = signedDelegation?.delegation?.delegate;
+    
+    if (!delegate) {
+      console.log(`[Skip] Wallet ${d.user_address} has no delegate in delegation_data, skipping`);
       return false;
     }
-    const delegateMatch = d.delegate.toLowerCase() === EXPECTED_DELEGATE;
+    const delegateMatch = delegate.toLowerCase() === EXPECTED_DELEGATE;
     if (!delegateMatch) {
-      console.log(`[Skip] Wallet ${d.user_address} has outdated delegation (delegate: ${d.delegate}), skipping`);
+      console.log(`[Skip] Wallet ${d.user_address} has outdated delegation (delegate: ${delegate}), skipping`);
     }
     return delegateMatch;
   });
