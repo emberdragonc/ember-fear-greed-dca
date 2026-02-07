@@ -1917,7 +1917,315 @@ async function processApprovals(delegations: DelegationRecord[], isBuy: boolean)
   }
 }
 
-// ============ PHASE 2: PARALLEL SWAPS VIA USEROPS ============
+// ============ JSON-RPC BATCHING UTILITIES ============
+
+interface JsonRpcRequest {
+  jsonrpc: '2.0';
+  method: string;
+  params: any[];
+  id: number;
+}
+
+interface JsonRpcResponse {
+  jsonrpc: '2.0';
+  id: number;
+  result?: any;
+  error?: {
+    code: number;
+    message: string;
+    data?: any;
+  };
+}
+
+interface UserOpBatchItem {
+  id: number;
+  walletData: WalletData;
+  swapQuote: { swap: any; quote: any };
+  userOp: any;
+}
+
+interface BatchSendResult {
+  success: boolean;
+  userOpHash: string | null;
+  error: string | null;
+  walletAddress: string;
+}
+
+/**
+ * Send multiple UserOperations to Pimlico bundler in a single JSON-RPC batch request
+ * This reduces HTTP overhead from N requests to 1 request for N UserOps
+ */
+async function sendBatchedUserOps(
+  batchItems: UserOpBatchItem[]
+): Promise<BatchSendResult[]> {
+  if (batchItems.length === 0) {
+    return [];
+  }
+
+  const startTime = Date.now();
+  console.log(`[Batch] Sending ${batchItems.length} UserOps in single JSON-RPC batch...`);
+
+  // Build JSON-RPC batch request
+  const requests: JsonRpcRequest[] = batchItems.map((item, index) => ({
+    jsonrpc: '2.0',
+    method: 'eth_sendUserOperation',
+    params: [item.userOp, '0x2105'], // Base chain ID
+    id: item.id,
+  }));
+
+  try {
+    // Send single HTTP request with batched JSON-RPC calls
+    const response = await fetch(PIMLICO_BUNDLER_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requests),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[Batch] HTTP error ${response.status}: ${errorText.slice(0, 200)}`);
+      // Mark all as failed
+      return batchItems.map(item => ({
+        success: false,
+        userOpHash: null,
+        error: `HTTP ${response.status}: ${errorText.slice(0, 100)}`,
+        walletAddress: item.walletData.smartAccountAddress,
+      }));
+    }
+
+    const responses: JsonRpcResponse[] = await response.json();
+    const duration = Date.now() - startTime;
+    console.log(`[Batch] Received ${responses.length} responses in ${duration}ms`);
+
+    // Map responses back to batch items by ID
+    const results: BatchSendResult[] = [];
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const item of batchItems) {
+      const response = responses.find(r => r.id === item.id);
+
+      if (!response) {
+        errorCount++;
+        results.push({
+          success: false,
+          userOpHash: null,
+          error: 'No response for this batch item',
+          walletAddress: item.walletData.smartAccountAddress,
+        });
+        continue;
+      }
+
+      if (response.error) {
+        errorCount++;
+        results.push({
+          success: false,
+          userOpHash: null,
+          error: response.error.message || `JSON-RPC error ${response.error.code}`,
+          walletAddress: item.walletData.smartAccountAddress,
+        });
+        console.error(`[Batch] UserOp ${item.id} failed: ${response.error.message}`);
+      } else {
+        successCount++;
+        results.push({
+          success: true,
+          userOpHash: response.result,
+          error: null,
+          walletAddress: item.walletData.smartAccountAddress,
+        });
+      }
+    }
+
+    console.log(`[Batch] Results: ${successCount} success, ${errorCount} errors`);
+    return results;
+  } catch (error: any) {
+    console.error(`[Batch] Network error sending batch: ${error?.message || error}`);
+    // Mark all as failed
+    return batchItems.map(item => ({
+      success: false,
+      userOpHash: null,
+      error: error?.message || 'Network error',
+      walletAddress: item.walletData.smartAccountAddress,
+    }));
+  }
+}
+
+/**
+ * Wait for batched UserOperation receipts
+ * Uses individual calls since bundler doesn't support batch receipt queries
+ */
+async function waitForBatchedUserOpReceipts(
+  results: BatchSendResult[]
+): Promise<Map<string, { success: boolean; txHash: string | null; error: string | null }>> {
+  const receiptMap = new Map<string, { success: boolean; txHash: string | null; error: string | null }>();
+
+  // Filter successful submissions
+  const successfulResults = results.filter(r => r.success && r.userOpHash);
+
+  if (successfulResults.length === 0) {
+    // Mark all as failed
+    for (const result of results) {
+      receiptMap.set(result.walletAddress, {
+        success: false,
+        txHash: null,
+        error: result.error || 'Submission failed',
+      });
+    }
+    return receiptMap;
+  }
+
+  console.log(`[Batch] Waiting for ${successfulResults.length} UserOp receipts...`);
+
+  // Wait for receipts (can be parallel since these are just polling calls)
+  const receiptPromises = successfulResults.map(async (result) => {
+    try {
+      const receipt = await bundlerClient.waitForUserOperationReceipt({
+        hash: result.userOpHash as `0x${string}`,
+        timeout: 120000,
+      });
+
+      if (receipt.success) {
+        receiptMap.set(result.walletAddress, {
+          success: true,
+          txHash: receipt.receipt.transactionHash,
+          error: null,
+        });
+      } else {
+        receiptMap.set(result.walletAddress, {
+          success: false,
+          txHash: null,
+          error: 'UserOperation reverted on-chain',
+        });
+      }
+    } catch (error: any) {
+      receiptMap.set(result.walletAddress, {
+        success: false,
+        txHash: null,
+        error: `Receipt timeout: ${error?.message || 'Unknown error'}`,
+      });
+    }
+  });
+
+  await Promise.all(receiptPromises);
+
+  // Mark failed submissions
+  for (const result of results) {
+    if (!result.success) {
+      receiptMap.set(result.walletAddress, {
+        success: false,
+        txHash: null,
+        error: result.error || 'Unknown error',
+      });
+    }
+  }
+
+  const successCount = Array.from(receiptMap.values()).filter(r => r.success).length;
+  console.log(`[Batch] Receipts: ${successCount}/${results.length} confirmed on-chain`);
+
+  return receiptMap;
+}
+
+// ============ PHASE 2: PARALLEL SWAPS VIA USEROPS WITH BATCHING ============
+
+interface PreparedSwap {
+  walletData: WalletData;
+  swapQuote: { swap: any; quote: any };
+  nonceKey: bigint;
+}
+
+async function prepareSwap(
+  walletData: WalletData,
+  decision: DCADecision,
+  nonceKey: bigint
+): Promise<PreparedSwap | null> {
+  const { smartAccountAddress, swapAmountAfterFee } = walletData;
+
+  const isBuy = decision.action === 'buy';
+  const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH;
+  const tokenOut = isBuy ? ADDRESSES.WETH : ADDRESSES.USDC;
+
+  // Get swap quote
+  const swapQuote = await getSwapQuote(
+    smartAccountAddress,
+    tokenIn,
+    tokenOut,
+    swapAmountAfterFee.toString()
+  );
+
+  if (!swapQuote) {
+    console.error(`[Prepare] Failed to get quote for ${smartAccountAddress}`);
+    return null;
+  }
+
+  return {
+    walletData,
+    swapQuote,
+    nonceKey,
+  };
+}
+
+async function buildUserOpForSwap(
+  backendSmartAccount: any,
+  preparedSwap: PreparedSwap,
+  decision: DCADecision
+): Promise<UserOpBatchItem | null> {
+  const { walletData, swapQuote, nonceKey } = preparedSwap;
+  const { delegation, smartAccountAddress, swapAmountAfterFee, fee } = walletData;
+
+  try {
+    // Parse delegation
+    const signedDelegation = typeof delegation.delegation_data === 'string'
+      ? JSON.parse(delegation.delegation_data)
+      : delegation.delegation_data;
+
+    if (!signedDelegation.signature) {
+      throw new Error('Delegation missing signature');
+    }
+
+    // Create execution
+    const execution = createExecution({
+      target: swapQuote.swap.to as Address,
+      value: BigInt(swapQuote.swap.value || '0'),
+      callData: swapQuote.swap.data as Hex,
+    });
+
+    // Encode redeem call
+    const redeemCalldata = DelegationManager.encode.redeemDelegations({
+      delegations: [[signedDelegation]],
+      modes: [ExecutionMode.SingleDefault],
+      executions: [[execution]],
+    });
+
+    // Encode nonce
+    const nonce = encodeNonce({ key: nonceKey, sequence: 0n });
+
+    // Get paymaster data
+    const calls = [{
+      to: ADDRESSES.DELEGATION_MANAGER,
+      data: redeemCalldata,
+      value: 0n,
+    }];
+
+    // Build the UserOperation manually for batching
+    const userOp = await backendSmartAccount.getUserOperation({
+      nonce,
+      calls,
+      paymaster: pimlicoPaymasterClient,
+    });
+
+    return {
+      id: Number(nonceKey), // Use nonceKey as unique ID
+      walletData,
+      swapQuote,
+      userOp,
+    };
+  } catch (error: any) {
+    console.error(`[BuildUserOp] Failed for ${smartAccountAddress}: ${error?.message}`);
+    return null;
+  }
+}
 
 async function executeSwapWithUserOp(
   walletData: WalletData,
@@ -1958,7 +2266,7 @@ async function executeSwapWithUserOp(
 
   totalRetries += swapQuote.retryInfo.attempts - 1;
 
-  // Execute via UserOp with parallel nonce
+  // Execute via UserOp with parallel nonce (legacy non-batched method)
   const swapResult = await executeDelegatedSwapWithRetry(
     delegation,
     decision.action as 'buy' | 'sell',
@@ -2008,7 +2316,7 @@ async function processSwapsParallel(
   const tokenDecimals = isBuy ? 6 : 18;
   const tokenSymbol = isBuy ? 'USDC' : 'ETH';
 
-  console.log(`\n[Phase 2] Preparing ${delegations.length} wallets for parallel swaps via UserOps...`);
+  console.log(`\n[Phase 2] Preparing ${delegations.length} wallets for batched swaps via JSON-RPC batching...`);
 
   // Initialize backend smart account
   const backendSmartAccount = await initBackendSmartAccount();
@@ -2029,18 +2337,18 @@ async function processSwapsParallel(
       // Get both balances for total value check
       const usdcBalance = await getUSDCBalance(smartAccountAddress);
       const ethBalance = await getETHBalance(smartAccountAddress);
-      
+
       // Calculate total wallet value in USD
       const usdcValueUsd = Number(formatUnits(usdcBalance, 6));
       const ethValueUsd = Number(formatUnits(ethBalance, 18)) * ethPriceUsd;
       const totalValueUsd = usdcValueUsd + ethValueUsd;
-      
+
       // Skip if total wallet value < $5
       if (totalValueUsd < MIN_WALLET_VALUE_USD) {
         console.log(`[Phase 2] ${smartAccountAddress}: Total value $${totalValueUsd.toFixed(2)} < $${MIN_WALLET_VALUE_USD} minimum`);
         return;
       }
-      
+
       const balance = isBuy ? usdcBalance : ethBalance;
 
       if (balance < MIN_SWAP_AMOUNT) {
@@ -2081,11 +2389,12 @@ async function processSwapsParallel(
     return { results: [], walletDataMap };
   }
 
-  // Process swaps in batches of OPTIMAL_BATCH_SIZE
+  // Process swaps in batches with JSON-RPC batching
   const allResults: ExecutionResult[] = [];
   const baseNonceKey = BigInt(Date.now());
   console.log(`[Phase 2] Base nonce key: ${baseNonceKey}`);
   console.log(`[Phase 2] Processing in batches of ${OPTIMAL_BATCH_SIZE} with ${BATCH_DELAY_MS}ms delay between batches`);
+  console.log(`[Phase 2] Using JSON-RPC batching: 1 HTTP request per ${OPTIMAL_BATCH_SIZE} UserOps`);
 
   for (let batchIndex = 0; batchIndex < walletDataList.length; batchIndex += OPTIMAL_BATCH_SIZE) {
     const batch = walletDataList.slice(batchIndex, batchIndex + OPTIMAL_BATCH_SIZE);
@@ -2093,36 +2402,146 @@ async function processSwapsParallel(
     const batchNum = Math.floor(batchIndex / OPTIMAL_BATCH_SIZE) + 1;
     const totalBatches = Math.ceil(walletDataList.length / OPTIMAL_BATCH_SIZE);
 
-    console.log(`\n[Phase 2] Batch ${batchNum}/${totalBatches}: Processing ${batch.length} wallets...`);
+    console.log(`\n[Phase 2] Batch ${batchNum}/${totalBatches}: Processing ${batch.length} wallets with JSON-RPC batching...`);
 
-    // Process current batch in parallel
-    const batchResults = await Promise.all(
+    // Step 1: Prepare swaps (get quotes) - parallel but independent API calls
+    console.log(`[Phase 2]   Step 1: Fetching ${batch.length} swap quotes...`);
+    const preparedSwaps: (PreparedSwap | null)[] = await Promise.all(
       batch.map((walletData, index) => {
         const globalIndex = batchIndex + index;
         const nonceKey = baseNonceKey + BigInt(globalIndex);
-        console.log(`[Phase 2] Wallet ${globalIndex + 1}/${walletDataList.length} (${walletData.smartAccountAddress}) → nonce key ${nonceKey}`);
-
-        return executeSwapWithUserOp(walletData, decision, nonceKey)
-          .then(result => result)
-          .catch(error => ({
-            success: false,
-            txHash: null,
-            error: error.message,
-            errorType: 'unknown' as ErrorType,
-            amountIn: walletData.swapAmountAfterFee.toString(),
-            amountOut: '0',
-            feeCollected: '0',
-            retryCount: 0,
-            lastError: error.message,
-          }));
+        return prepareSwap(walletData, decision, nonceKey);
       })
     );
 
-    allResults.push(...batchResults);
+    const validPreparedSwaps = preparedSwaps.filter((s): s is PreparedSwap => s !== null);
+    console.log(`[Phase 2]   Quotes received: ${validPreparedSwaps.length}/${batch.length}`);
+
+    if (validPreparedSwaps.length === 0) {
+      // All quotes failed, mark as failed
+      for (const walletData of batch) {
+        allResults.push({
+          success: false,
+          txHash: null,
+          error: 'Failed to get swap quote',
+          errorType: 'network',
+          amountIn: walletData.swapAmountAfterFee.toString(),
+          amountOut: '0',
+          feeCollected: '0',
+          retryCount: 1,
+          lastError: 'Quote fetch failed',
+        });
+      }
+      if (!isLastBatch) await sleep(BATCH_DELAY_MS);
+      continue;
+    }
+
+    // Step 2: Build UserOperations - parallel but local computation
+    console.log(`[Phase 2]   Step 2: Building ${validPreparedSwaps.length} UserOperations...`);
+    const batchItems: (UserOpBatchItem | null)[] = await Promise.all(
+      validPreparedSwaps.map(preparedSwap =>
+        buildUserOpForSwap(backendSmartAccount, preparedSwap, decision)
+      )
+    );
+
+    const validBatchItems = batchItems.filter((b): b is UserOpBatchItem => b !== null);
+    console.log(`[Phase 2]   UserOps built: ${validBatchItems.length}/${validPreparedSwaps.length}`);
+
+    if (validBatchItems.length === 0) {
+      // All UserOp builds failed
+      for (const preparedSwap of validPreparedSwaps) {
+        allResults.push({
+          success: false,
+          txHash: null,
+          error: 'Failed to build UserOperation',
+          errorType: 'unknown',
+          amountIn: preparedSwap.walletData.swapAmountAfterFee.toString(),
+          amountOut: '0',
+          feeCollected: '0',
+          retryCount: 0,
+          lastError: 'UserOp build failed',
+        });
+      }
+      if (!isLastBatch) await sleep(BATCH_DELAY_MS);
+      continue;
+    }
+
+    // Step 3: Send batched UserOperations - SINGLE HTTP REQUEST!
+    console.log(`[Phase 2]   Step 3: Sending ${validBatchItems.length} UserOps in single JSON-RPC batch...`);
+    const batchResults = await sendBatchedUserOps(validBatchItems);
+
+    // Step 4: Wait for receipts
+    console.log(`[Phase 2]   Step 4: Waiting for on-chain confirmation...`);
+    const receiptMap = await waitForBatchedUserOpReceipts(batchResults);
+
+    // Step 5: Build ExecutionResults
+    const batchExecutionResults: ExecutionResult[] = [];
+
+    // Process results for wallets that were in the batch
+    const processedWallets = new Set<string>();
+
+    for (const batchItem of validBatchItems) {
+      const { walletData, swapQuote } = batchItem;
+      const receipt = receiptMap.get(walletData.smartAccountAddress);
+      processedWallets.add(walletData.smartAccountAddress);
+
+      if (receipt?.success && receipt.txHash) {
+        // Success!
+        console.log(`[Phase 2] ✅ ${walletData.smartAccountAddress}: Confirmed on-chain`);
+        batchExecutionResults.push({
+          success: true,
+          txHash: receipt.txHash,
+          error: null,
+          errorType: null,
+          amountIn: walletData.swapAmountAfterFee.toString(),
+          amountOut: swapQuote.quote.quote.output.amount,
+          feeCollected: walletData.fee.toString(),
+          retryCount: 0,
+          lastError: null,
+        });
+      } else {
+        // Failed
+        const errorMsg = receipt?.error || 'Unknown error';
+        console.log(`[Phase 2] ❌ ${walletData.smartAccountAddress}: ${errorMsg}`);
+        batchExecutionResults.push({
+          success: false,
+          txHash: null,
+          error: errorMsg,
+          errorType: 'unknown',
+          amountIn: walletData.swapAmountAfterFee.toString(),
+          amountOut: swapQuote.quote.quote.output.amount,
+          feeCollected: '0',
+          retryCount: 0,
+          lastError: errorMsg,
+        });
+      }
+    }
+
+    // Add results for wallets that failed at quote/build stage
+    for (const walletData of batch) {
+      if (!processedWallets.has(walletData.smartAccountAddress)) {
+        batchExecutionResults.push({
+          success: false,
+          txHash: null,
+          error: 'Quote or UserOp build failed',
+          errorType: 'network',
+          amountIn: walletData.swapAmountAfterFee.toString(),
+          amountOut: '0',
+          feeCollected: '0',
+          retryCount: 1,
+          lastError: 'Quote or UserOp build failed',
+        });
+      }
+    }
+
+    allResults.push(...batchExecutionResults);
+
+    const successCount = batchExecutionResults.filter(r => r.success).length;
+    console.log(`[Phase 2] Batch ${batchNum} complete: ${successCount}/${batch.length} success`);
 
     // Delay between batches (except after last batch)
     if (!isLastBatch) {
-      console.log(`[Phase 2] Batch ${batchNum} complete. Waiting ${BATCH_DELAY_MS}ms before next batch...`);
+      console.log(`[Phase 2] Waiting ${BATCH_DELAY_MS}ms before next batch...`);
       await sleep(BATCH_DELAY_MS);
     }
   }

@@ -1,0 +1,134 @@
+{
+  "timestamp": "2026-02-07T22:41:14.873Z",
+  "totalSimulatedWallets": 1000,
+  "phases": [
+    {
+      "phase": "Alchemy RPC Balance Checks",
+      "totalTime": 14802,
+      "successCount": 1000,
+      "errorCount": 0,
+      "avgTimePerCall": 227.753,
+      "rateLimitHits": 0,
+      "errors": []
+    },
+    {
+      "phase": "CoinGecko API Price Fetch",
+      "totalTime": 11653,
+      "successCount": 3,
+      "errorCount": 997,
+      "avgTimePerCall": 65.281,
+      "rateLimitHits": 1994,
+      "errors": [
+        {
+          "wallet": "0xc90208db726057da170e30add18ef08dcdcb2498",
+          "error": "Rate limited (429)"
+        },
+        {
+          "wallet": "0x3437b0e7ac02f5a5c86edc6a6c157405f0101d1d",
+          "error": "Rate limited (429)"
+        },
+        {
+          "wallet": "0x48aeb7fd9eaa4234dbde4e16f63255f818c06639",
+          "error": "Rate limited (429)"
+        },
+        {
+          "wallet": "0x14ce235bef6e651997a0bf7a81d87f747c3003ba",
+          "error": "Rate limited (429)"
+        },
+        {
+          "wallet": "0xbbc4e353f6a45626a58e80cb6246d153d41d10ef",
+          "error": "Rate limited (429)"
+        },
+        {
+          "wallet": "0xa48a572d05a423ea2bb1b0e6049e7ed190a0cf83",
+          "error": "Rate limited (429)"
+        },
+        {
+          "wallet": "0x059e6d7885147f26e60ae885773b267e412f5e63",
+          "error": "Rate limited (429)"
+        },
+        {
+          "wallet": "0xb91b497b2826bb9b80330fd72caa5ef96c358c9d",
+          "error": "Rate limited (429)"
+        },
+        {
+          "wallet": "0x4f38dde0be7d92abde9f3d4ba29a92e02bd71bd7",
+          "error": "Rate limited (429)"
+        },
+        {
+          "wallet": "0xc0e447631a09d9918cbbb270b69adfbc78444d3d",
+          "error": "Rate limited (429)"
+        }
+      ]
+    },
+    {
+      "phase": "Uniswap Trading API Quote Fetch",
+      "totalTime": 64550,
+      "successCount": 999,
+      "errorCount": 1,
+      "avgTimePerCall": 1892.789,
+      "rateLimitHits": 0,
+      "errors": [
+        {
+          "wallet": "0xb91b497b2826bb9b80330fd72caa5ef96c358c9d",
+          "error": "HTTP 404: Not Found"
+        }
+      ]
+    },
+    {
+      "phase": "Pimlico Bundler API Test",
+      "totalTime": 13853,
+      "successCount": 500,
+      "errorCount": 500,
+      "avgTimePerCall": 132.733,
+      "rateLimitHits": 0,
+      "errors": [
+        {
+          "wallet": "0x4f38dde0be7d92abde9f3d4ba29a92e02bd71bd7",
+          "error": "Unknown RPC error"
+        },
+        {
+          "wallet": "0xbbc4e353f6a45626a58e80cb6246d153d41d10ef",
+          "error": "Unknown RPC error"
+        },
+        {
+          "wallet": "0x3437b0e7ac02f5a5c86edc6a6c157405f0101d1d",
+          "error": "Unknown RPC error"
+        },
+        {
+          "wallet": "0x48aeb7fd9eaa4234dbde4e16f63255f818c06639",
+          "error": "Unknown RPC error"
+        },
+        {
+          "wallet": "0xb91b497b2826bb9b80330fd72caa5ef96c358c9d",
+          "error": "Unknown RPC error"
+        },
+        {
+          "wallet": "0x48aeb7fd9eaa4234dbde4e16f63255f818c06639",
+          "error": "Unknown RPC error"
+        },
+        {
+          "wallet": "0xc90208db726057da170e30add18ef08dcdcb2498",
+          "error": "Unknown RPC error"
+        },
+        {
+          "wallet": "0xc0e447631a09d9918cbbb270b69adfbc78444d3d",
+          "error": "Unknown RPC error"
+        },
+        {
+          "wallet": "0x14ce235bef6e651997a0bf7a81d87f747c3003ba",
+          "error": "Unknown RPC error"
+        },
+        {
+          "wallet": "0x4f38dde0be7d92abde9f3d4ba29a92e02bd71bd7",
+          "error": "Unknown RPC error"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "totalTime": 104858,
+    "totalRateLimitHits": 1994,
+    "estimatedTimeFor1000RealWallets": 125830
+  }
+}
