@@ -2,10 +2,8 @@ name: Daily DCA Executor
 
 on:
   schedule:
-    # TEMPORARY: Testing at 21:20 UTC on Feb 7, 2026
-    # GH Actions needs 1hr+ to recognize changes - scheduled 1.5hrs ahead
-    # Will revert to '0 12 * * *' after test confirms fixes work
-    - cron: '20 21 * * *'
+    # Runs daily at 12:00 UTC
+    - cron: '0 12 * * *'
   workflow_dispatch:
     # Allow manual triggers for testing
 
