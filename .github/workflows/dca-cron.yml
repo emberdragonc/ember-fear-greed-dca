@@ -1,11 +1,9 @@
 name: Daily DCA Executor
 
 on:
-  schedule:
-    # Runs daily at 12:00 UTC
-    - cron: '0 12 * * *'
+  # OpenClaw cron triggers this via workflow_dispatch at 12:00 UTC
+  # GitHub's native cron removed due to unreliability
   workflow_dispatch:
-    # Allow manual triggers for testing
 
 jobs:
   execute-dca:
