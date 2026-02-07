@@ -1,44 +1,24 @@
 {
-  "timestamp": "2026-02-07T22:05:41.591Z",
-  "totalSimulatedWallets": 100,
+  "timestamp": "2026-02-07T22:54:39.671Z",
+  "totalSimulatedWallets": 1000,
   "phases": [
     {
       "phase": "Alchemy RPC Balance Checks",
-      "totalTime": 1864,
-      "successCount": 100,
+      "totalTime": 14958,
+      "successCount": 1000,
       "errorCount": 0,
-      "avgTimePerCall": 1508.6,
+      "avgTimePerCall": 242.719,
       "rateLimitHits": 0,
       "errors": []
     },
     {
       "phase": "CoinGecko API Price Fetch",
-      "totalTime": 727,
-      "successCount": 0,
-      "errorCount": 100,
-      "avgTimePerCall": 512.16,
-      "rateLimitHits": 200,
+      "totalTime": 11173,
+      "successCount": 5,
+      "errorCount": 995,
+      "avgTimePerCall": 43.205,
+      "rateLimitHits": 1990,
       "errors": [
-        {
-          "wallet": "0xb91b497b2826bb9b80330fd72caa5ef96c358c9d",
-          "error": "Rate limited (429)"
-        },
-        {
-          "wallet": "0x4f38dde0be7d92abde9f3d4ba29a92e02bd71bd7",
-          "error": "Rate limited (429)"
-        },
-        {
-          "wallet": "0xc90208db726057da170e30add18ef08dcdcb2498",
-          "error": "Rate limited (429)"
-        },
-        {
-          "wallet": "0xc0e447631a09d9918cbbb270b69adfbc78444d3d",
-          "error": "Rate limited (429)"
-        },
-        {
-          "wallet": "0x3437b0e7ac02f5a5c86edc6a6c157405f0101d1d",
-          "error": "Rate limited (429)"
-        },
         {
           "wallet": "0x48aeb7fd9eaa4234dbde4e16f63255f818c06639",
           "error": "Rate limited (429)"
@@ -56,74 +36,53 @@
           "error": "Rate limited (429)"
         },
         {
+          "wallet": "0x059e6d7885147f26e60ae885773b267e412f5e63",
+          "error": "Rate limited (429)"
+        },
+        {
           "wallet": "0xb91b497b2826bb9b80330fd72caa5ef96c358c9d",
+          "error": "Rate limited (429)"
+        },
+        {
+          "wallet": "0x4f38dde0be7d92abde9f3d4ba29a92e02bd71bd7",
+          "error": "Rate limited (429)"
+        },
+        {
+          "wallet": "0xc0e447631a09d9918cbbb270b69adfbc78444d3d",
+          "error": "Rate limited (429)"
+        },
+        {
+          "wallet": "0x3437b0e7ac02f5a5c86edc6a6c157405f0101d1d",
+          "error": "Rate limited (429)"
+        },
+        {
+          "wallet": "0xc90208db726057da170e30add18ef08dcdcb2498",
           "error": "Rate limited (429)"
         }
       ]
     },
     {
       "phase": "Uniswap Trading API Quote Fetch",
-      "totalTime": 11167,
-      "successCount": 88,
-      "errorCount": 12,
-      "avgTimePerCall": 3601.29,
+      "totalTime": 55950,
+      "successCount": 1000,
+      "errorCount": 0,
+      "avgTimePerCall": 1779.135,
       "rateLimitHits": 0,
-      "errors": [
-        {
-          "wallet": "0xbbc4e353f6a45626a58e80cb6246d153d41d10ef",
-          "error": "HTTP 504: Gateway Timeout"
-        },
-        {
-          "wallet": "0x48aeb7fd9eaa4234dbde4e16f63255f818c06639",
-          "error": "HTTP 504: Gateway Timeout"
-        },
-        {
-          "wallet": "0xbbc4e353f6a45626a58e80cb6246d153d41d10ef",
-          "error": "HTTP 504: Gateway Timeout"
-        },
-        {
-          "wallet": "0x4f38dde0be7d92abde9f3d4ba29a92e02bd71bd7",
-          "error": "HTTP 504: Gateway Timeout"
-        },
-        {
-          "wallet": "0x3437b0e7ac02f5a5c86edc6a6c157405f0101d1d",
-          "error": "HTTP 504: Gateway Timeout"
-        },
-        {
-          "wallet": "0xa48a572d05a423ea2bb1b0e6049e7ed190a0cf83",
-          "error": "HTTP 504: Gateway Timeout"
-        },
-        {
-          "wallet": "0xc90208db726057da170e30add18ef08dcdcb2498",
-          "error": "HTTP 504: Gateway Timeout"
-        },
-        {
-          "wallet": "0x14ce235bef6e651997a0bf7a81d87f747c3003ba",
-          "error": "HTTP 504: Gateway Timeout"
-        },
-        {
-          "wallet": "0xa48a572d05a423ea2bb1b0e6049e7ed190a0cf83",
-          "error": "HTTP 504: Gateway Timeout"
-        },
-        {
-          "wallet": "0xc0e447631a09d9918cbbb270b69adfbc78444d3d",
-          "error": "HTTP 504: Gateway Timeout"
-        }
-      ]
+      "errors": []
     },
     {
-      "phase": "Pimlico Bundler API Test",
-      "totalTime": 1587,
-      "successCount": 100,
+      "phase": "Pimlico Bundler API Test (JSON-RPC Batched)",
+      "totalTime": 16705,
+      "successCount": 1000,
       "errorCount": 0,
-      "avgTimePerCall": 1228.47,
+      "avgTimePerCall": 354.2,
       "rateLimitHits": 0,
       "errors": []
     }
   ],
   "summary": {
-    "totalTime": 15345,
-    "totalRateLimitHits": 200,
-    "estimatedTimeFor100RealWallets": 18414
+    "totalTime": 98786,
+    "totalRateLimitHits": 1990,
+    "estimatedTimeFor1000RealWallets": 118543
   }
 }
