@@ -1,9 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
-import { getBalanceHistory, BalanceHistoryEntry } from '@/lib/supabase';
+import { usePortfolioHistory } from '@/hooks/usePortfolioHistory';
 
 // Mock data for demonstration when no history exists
 const generateMockData = () => {
@@ -47,52 +46,16 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
 export function BalanceHistoryChart() {
   const { smartAccountAddress } = useSmartAccountContext();
-  const [historyData, setHistoryData] = useState<ChartDataPoint[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [hasRealData, setHasRealData] = useState(false);
+  const { history, isLoading, hasRealData, error } = usePortfolioHistory(smartAccountAddress);
 
-  useEffect(() => {
-    const fetchHistory = async () => {
-      if (!smartAccountAddress) {
-        setIsLoading(false);
-        return;
-      }
-
-      setIsLoading(true);
-      try {
-        const history = await getBalanceHistory(smartAccountAddress);
-        
-        if (history.length > 0) {
-          // Transform real data for the chart
-          const chartData: ChartDataPoint[] = history
-            .reverse() // Oldest first
-            .map((entry) => ({
-              date: entry.recorded_at,
-              displayDate: new Date(entry.recorded_at).toLocaleDateString('en-US', {
-                month: 'short',
-                day: 'numeric',
-              }),
-              total_usd: entry.total_usd,
-            }));
-          setHistoryData(chartData);
-          setHasRealData(true);
-        } else {
-          // No real data yet, show mock data
-          setHistoryData(generateMockData());
-          setHasRealData(false);
-        }
-      } catch (error) {
-        console.error('Error fetching balance history:', error);
-        // On error, show mock data
-        setHistoryData(generateMockData());
-        setHasRealData(false);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchHistory();
-  }, [smartAccountAddress]);
+  // Use real data if available, otherwise mock data
+  const chartData: ChartDataPoint[] = hasRealData && history.length > 0
+    ? history.map((point) => ({
+        date: point.date,
+        displayDate: point.displayDate,
+        total_usd: point.total_usd,
+      }))
+    : generateMockData();
 
   if (!smartAccountAddress) {
     return (
@@ -114,11 +77,21 @@ export function BalanceHistoryChart() {
             Demo Data
           </span>
         )}
+        {hasRealData && (
+          <span className="text-xs px-2 py-1 bg-emerald-500/20 text-emerald-400 rounded-full">
+            Live Data
+          </span>
+        )}
       </div>
 
       {isLoading ? (
         <div className="flex items-center justify-center h-48">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-400"></div>
+        </div>
+      ) : error ? (
+        <div className="text-center py-8">
+          <p className="text-sm text-red-400">Failed to load history</p>
+          <p className="text-xs text-gray-500 mt-1">{error}</p>
         </div>
       ) : (
         <>
@@ -134,7 +107,7 @@ export function BalanceHistoryChart() {
           <div className="h-48 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
-                data={historyData}
+                data={chartData}
                 margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
               >
                 <CartesianGrid
@@ -176,25 +149,25 @@ export function BalanceHistoryChart() {
             </ResponsiveContainer>
           </div>
 
-          {hasRealData && historyData.length > 1 && (
+          {hasRealData && history.length > 1 && (
             <div className="mt-4 grid grid-cols-3 gap-3 text-center">
               <div className="p-2 bg-white/5 rounded-lg">
                 <p className="text-xs text-gray-500">Start</p>
                 <p className="text-sm font-semibold text-white">
-                  ${historyData[0]?.total_usd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  ${history[0]?.total_usd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                 </p>
               </div>
               <div className="p-2 bg-white/5 rounded-lg">
                 <p className="text-xs text-gray-500">Current</p>
                 <p className="text-sm font-semibold text-white">
-                  ${historyData[historyData.length - 1]?.total_usd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  ${history[history.length - 1]?.total_usd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                 </p>
               </div>
               <div className="p-2 bg-white/5 rounded-lg">
                 <p className="text-xs text-gray-500">Change</p>
                 {(() => {
-                  const start = historyData[0]?.total_usd || 0;
-                  const end = historyData[historyData.length - 1]?.total_usd || 0;
+                  const start = history[0]?.total_usd || 0;
+                  const end = history[history.length - 1]?.total_usd || 0;
                   const change = start > 0 ? ((end - start) / start) * 100 : 0;
                   const isPositive = change >= 0;
                   return (

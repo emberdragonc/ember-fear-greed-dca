@@ -13,6 +13,7 @@ import { TransactionHistory } from '@/components/TransactionHistory';
 import { TestnetBanner } from '@/components/TestnetBanner';
 import FearGreedGauge from '@/components/FearGreedGauge';
 import { CountdownCard } from '@/components/CountdownCard';
+import { APYDisplay } from '@/components/APYDisplay';
 import { useFearGreed } from '@/hooks/useFearGreed';
 import { useProtocolStats } from '@/hooks/useProtocolStats';
 import { useDelegation } from '@/hooks/useDelegation';
@@ -293,9 +294,10 @@ export default function Home() {
         ) : (
           // Connected state - Full Dashboard
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left column - Total Balance + Countdown + Fear & Greed + Chart */}
+            {/* Left column - Total Balance + APY + Countdown + Fear & Greed + Chart */}
             <div className="lg:col-span-1 space-y-6">
               <TotalBalanceCard />
+              <APYDisplay />
               <CountdownCard />
               <FearGreedGauge />
               <BalanceHistoryChart />
@@ -344,6 +346,45 @@ export default function Home() {
 
               {/* Transaction History - Full width in right column */}
               <TransactionHistory />
+
+              {/* FAQ Section */}
+              <div className="p-6 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">
+                <h3 className="text-lg font-semibold text-white mb-4">❓ Frequently Asked Questions</h3>
+                <div className="space-y-3">
+                  {[
+                    {
+                      q: "Why is the value of my buy decreasing each execution?",
+                      a: "This is by design! With percentage-based buying (2.5% in Extreme Fear, 5% in Fear), each buy uses a percentage of your REMAINING USDC balance. As your capital reduces, that percentage becomes a smaller absolute amount. Example: Starting with 1,000 USDC at 5% = $50 buy. After that, 950 USDC at 5% = $47.50. This ensures your strategy can sustain itself over a longer period and never runs out of cash."
+                    },
+                    {
+                      q: "How does the Fear & Greed strategy work?",
+                      a: "The bot buys ETH when sentiment is fearful and sells ETH when sentiment is greedy. Extreme Fear (0-24): Buys 2.5% of USDC balance. Fear (25-45): Buys 5% of USDC balance. Neutral (46-54): No action. Greed (55-75): Sells 2.5% of ETH balance. Extreme Greed (76-100): Sells 5% of ETH balance. Buy low, sell high — automatically."
+                    },
+                    {
+                      q: "How often does the bot execute?",
+                      a: "The DCA bot runs once daily at 12:00 UTC. It only executes a swap if the Fear & Greed Index is in the Fear or Extreme Fear zone. On neutral or greedy days, it simply waits."
+                    },
+                    {
+                      q: "What tokens can I DCA into?",
+                      a: "Currently the bot supports swapping USDC → WETH (Wrapped Ethereum) on Base. More token pairs are coming soon!"
+                    },
+                    {
+                      q: "Is my USDC safe?",
+                      a: "Yes — you maintain full custody. Your funds stay in YOUR smart account at all times. The delegation you sign only allows the backend to swap USDC→WETH within your specified limits. It cannot withdraw funds elsewhere. You can revoke the delegation anytime from this dashboard."
+                    },
+                  ].map((faq, i) => (
+                    <details key={i} className="group">
+                      <summary className="flex items-center justify-between cursor-pointer p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors">
+                        <span className="text-sm font-medium text-white pr-4">{faq.q}</span>
+                        <svg className="w-5 h-5 text-gray-400 group-open:rotate-180 transition-transform shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </summary>
+                      <p className="text-sm text-gray-400 mt-2 px-3 pb-2">{faq.a}</p>
+                    </details>
+                  ))}
+                </div>
+              </div>
 
               {/* Security Note */}
               <div className="p-4 bg-purple-500/10 rounded-xl border border-purple-500/20">

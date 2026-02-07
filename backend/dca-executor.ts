@@ -2,6 +2,13 @@
 // Runs daily to check F&G and execute swaps for delegated accounts
 // Uses MetaMask Delegation Framework for secure execution
 // Refactored to ERC-4337 architecture with parallel UserOperations
+//
+// Usage:
+//   npx tsx backend/dca-executor.ts           # Normal execution
+//   npx tsx backend/dca-executor.ts --dry-run # Simulation only (pre-flight check)
+
+// ============ CLI FLAGS ============
+const DRY_RUN = process.argv.includes('--dry-run');
 
 import {
   createPublicClient,
@@ -553,6 +560,151 @@ function calculateDecision(fgValue: number): DCADecision {
     return { action: 'sell', percentage: 2.5, reason: 'Greed - Sell 2.5%' };
   }
   return { action: 'sell', percentage: 5, reason: 'Extreme Greed - Sell 5%' };
+}
+
+// ============ DRY-RUN SIMULATION ============
+
+interface SimulationResult {
+  wallet: string;
+  balance: string;
+  amountToSwap: string;
+  status: 'PASS' | 'FAIL' | 'SKIP';
+  reason?: string;
+}
+
+async function simulateSwap(
+  userSmartAccount: Address,
+  tokenIn: Address,
+  amountIn: bigint,
+  tokenOut: Address
+): Promise<{ success: boolean; reason?: string }> {
+  // Use Alchemy's simulateAssetChanges to verify the swap would work
+  try {
+    const response = await fetch(ALCHEMY_RPC, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: 1,
+        jsonrpc: '2.0',
+        method: 'alchemy_simulateAssetChanges',
+        params: [{
+          from: userSmartAccount,
+          to: tokenIn,
+          data: encodeFunctionData({
+            abi: erc20Abi,
+            functionName: 'transfer',
+            args: [ADDRESSES.UNIVERSAL_ROUTER, amountIn]
+          })
+        }]
+      })
+    });
+
+    const data = await response.json();
+    
+    if (data.error) {
+      return { success: false, reason: data.error.message };
+    }
+    
+    // Check if the token transfer would succeed
+    const changes = data.result?.changes || [];
+    const hasTokenOut = changes.some((c: any) => 
+      c.to?.toLowerCase() === userSmartAccount.toLowerCase()
+    );
+    
+    return { success: true };
+  } catch (err) {
+    return { success: false, reason: err instanceof Error ? err.message : 'Unknown error' };
+  }
+}
+
+async function runDryRunSimulation(
+  delegations: DelegationRecord[],
+  decision: DCADecision
+): Promise<SimulationResult[]> {
+  console.log('\n========================================');
+  console.log('  DRY-RUN SIMULATION MODE');
+  console.log('========================================');
+  console.log('Simulating swaps without executing...\n');
+
+  const results: SimulationResult[] = [];
+  const isBuy = decision.action === 'buy';
+
+  for (const delegation of delegations) {
+    const userSmartAccount = delegation.smart_account_address as Address;
+    
+    // Get balances
+    const usdcBalance = await getUSDCBalance(userSmartAccount);
+    const ethBalance = await getETHBalance(userSmartAccount);
+    
+    const sourceBalance = isBuy ? usdcBalance : ethBalance;
+    const sourceDecimals = isBuy ? 6 : 18;
+    const sourceSymbol = isBuy ? 'USDC' : 'ETH';
+    
+    // Calculate amount to swap
+    const percentage = decision.percentage;
+    const amountToSwap = (sourceBalance * BigInt(Math.round(percentage * 100))) / 10000n;
+    
+    // Check minimum amounts
+    const minSwap = isBuy ? parseUnits('0.10', 6) : parseUnits('0.00005', 18);
+    
+    if (amountToSwap < minSwap) {
+      results.push({
+        wallet: userSmartAccount.slice(0, 10),
+        balance: formatUnits(sourceBalance, sourceDecimals),
+        amountToSwap: formatUnits(amountToSwap, sourceDecimals),
+        status: 'SKIP',
+        reason: `Below minimum (${formatUnits(minSwap, sourceDecimals)} ${sourceSymbol})`
+      });
+      continue;
+    }
+    
+    // Simulate the swap
+    const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH;
+    const tokenOut = isBuy ? ADDRESSES.WETH : ADDRESSES.USDC;
+    
+    const simulation = await simulateSwap(userSmartAccount, tokenIn, amountToSwap, tokenOut);
+    
+    results.push({
+      wallet: userSmartAccount.slice(0, 10),
+      balance: formatUnits(sourceBalance, sourceDecimals),
+      amountToSwap: formatUnits(amountToSwap, sourceDecimals),
+      status: simulation.success ? 'PASS' : 'FAIL',
+      reason: simulation.reason
+    });
+    
+    // Rate limit
+    await sleep(200);
+  }
+
+  // Print results table
+  console.log('\nSIMULATION RESULTS:');
+  console.log('----------------------------------------');
+  console.log('Wallet     | Balance    | To Swap   | Status');
+  console.log('----------------------------------------');
+  
+  let passCount = 0;
+  let failCount = 0;
+  let skipCount = 0;
+  
+  for (const r of results) {
+    const statusEmoji = r.status === 'PASS' ? '✅' : r.status === 'FAIL' ? '❌' : '⏭️';
+    console.log(`${r.wallet} | ${r.balance.padStart(10)} | ${r.amountToSwap.padStart(9)} | ${statusEmoji} ${r.status}${r.reason ? ` (${r.reason})` : ''}`);
+    
+    if (r.status === 'PASS') passCount++;
+    else if (r.status === 'FAIL') failCount++;
+    else skipCount++;
+  }
+  
+  console.log('----------------------------------------');
+  console.log(`\nSUMMARY: ${passCount} PASS | ${failCount} FAIL | ${skipCount} SKIP`);
+  
+  if (failCount > 0) {
+    console.log('\n⚠️ WARNING: Some wallets would FAIL - investigate before execution!');
+  } else {
+    console.log('\n✅ All wallets ready for execution');
+  }
+  
+  return results;
 }
 
 // ============ BALANCE FETCHING ============
@@ -2020,6 +2172,9 @@ async function runDCA() {
   console.log('========================================');
   console.log('  Fear & Greed DCA Executor');
   console.log('  ERC-4337 Architecture with Parallel UserOps');
+  if (DRY_RUN) {
+    console.log('  🔍 DRY-RUN MODE (simulation only)');
+  }
   console.log('========================================');
   console.log(`Time: ${new Date().toISOString()}`);
   console.log(`Backend EOA: ${backendAccount.address}`);
@@ -2105,6 +2260,15 @@ async function runDCA() {
   }
 
   const isBuy = decision.action === 'buy';
+
+  // ========================================
+  // DRY-RUN MODE: Simulate only, don't execute
+  // ========================================
+  if (DRY_RUN) {
+    await runDryRunSimulation(delegations, decision);
+    console.log('\n✅ Dry-run complete. No transactions were executed.');
+    return;
+  }
 
   // ========================================
   // PHASE 0: Deploy any undeployed user smart accounts
