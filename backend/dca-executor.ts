@@ -223,6 +223,114 @@ interface ExecutionResult {
   lastError: string | null;
 }
 
+// ============ ERROR SELECTORS & CAVEAT VALIDATION ============
+
+// Known error selectors for better debugging
+const ERROR_SELECTORS: Record<string, string> = {
+  '0xd81b2f2e': 'CaveatViolated - A delegation caveat enforcement failed',
+  '0x155ff427': 'DelegationNotFound - Delegation hash not registered',
+  '0x00000000': 'GenericRevert - Execution reverted without reason',
+  '0x08c379a0': 'Error(string) - Standard revert with message',
+  '0x4e487b71': 'Panic - Solidity panic (overflow, division by zero, etc)',
+};
+
+// Known caveat enforcers
+const CAVEAT_ENFORCERS: Record<string, string> = {
+  '0x7f20f61b1f09b08d970938f6fa563634d65c4eeb': 'AllowedTokensEnforcer',
+  '0x2c21fd0cb9dc8445cb3fb0dc5e7bb0aca01842b5': 'AllowedMethodsEnforcer',
+  '0x92bf12322527caa612fd31a0e810472bbb106a8f': 'IdEnforcer',
+  '0x1046bb45c8d673d4ea75321280db34899413c069': 'TimestampEnforcer',
+  '0x04658b29f6b82ed55274221a06fc97d318e25416': 'LimitedCallsEnforcer',
+};
+
+interface CaveatValidation {
+  valid: boolean;
+  reason?: string;
+  expiresAt?: number;
+  usesRemaining?: number;
+}
+
+function decodeErrorSelector(errorData: string): string {
+  if (!errorData || errorData.length < 10) return 'Unknown error';
+  const selector = errorData.slice(0, 10).toLowerCase();
+  
+  // Check for CaveatViolated with index
+  if (selector === '0xd81b2f2e' && errorData.length >= 74) {
+    const caveatIndex = parseInt(errorData.slice(66, 74), 16);
+    return `CaveatViolated - Caveat at index ${caveatIndex} failed enforcement`;
+  }
+  
+  return ERROR_SELECTORS[selector] || `Unknown error selector: ${selector}`;
+}
+
+function validateDelegationCaveats(delegationData: any): CaveatValidation {
+  const now = Math.floor(Date.now() / 1000);
+  const caveats = delegationData.caveats || [];
+  
+  for (const caveat of caveats) {
+    const enforcerAddr = caveat.enforcer?.toLowerCase();
+    const enforcerName = CAVEAT_ENFORCERS[enforcerAddr] || 'Unknown';
+    
+    // Check TimestampEnforcer
+    if (enforcerAddr === '0x1046bb45c8d673d4ea75321280db34899413c069') {
+      const terms = caveat.terms?.slice(2) || ''; // remove 0x
+      if (terms.length >= 64) {
+        const validAfter = parseInt(terms.slice(24, 32), 16);
+        const validUntil = parseInt(terms.slice(56, 64), 16);
+        
+        if (now < validAfter) {
+          return { 
+            valid: false, 
+            reason: `Delegation not yet valid (starts ${new Date(validAfter * 1000).toISOString()})` 
+          };
+        }
+        if (now > validUntil) {
+          return { 
+            valid: false, 
+            reason: `Delegation expired (ended ${new Date(validUntil * 1000).toISOString()})`,
+            expiresAt: validUntil
+          };
+        }
+        
+        // Warn if expiring soon (within 7 days)
+        const sevenDays = 7 * 24 * 60 * 60;
+        if (validUntil - now < sevenDays) {
+          console.log(`  ⚠️ Delegation expires soon: ${new Date(validUntil * 1000).toISOString()}`);
+        }
+      }
+    }
+    
+    // Check LimitedCallsEnforcer
+    if (enforcerAddr === '0x04658b29f6b82ed55274221a06fc97d318e25416') {
+      const terms = caveat.terms?.slice(2) || '';
+      if (terms.length >= 64) {
+        const maxCalls = parseInt(terms.slice(0, 64), 16);
+        // Note: We can't check current usage on-chain without calling the enforcer
+        // Just log the limit for visibility
+        if (maxCalls < 1000) {
+          console.log(`  ℹ️ Delegation has ${maxCalls} max calls limit`);
+        }
+      }
+    }
+  }
+  
+  return { valid: true };
+}
+
+function isPermanentFailure(errorMessage: string): boolean {
+  const permanentPatterns = [
+    'caveatviolated',
+    'delegationnotfound',
+    'expired',
+    'insufficient balance',
+    'transfer amount exceeds',
+    'invalid delegation',
+    'not authorized',
+  ];
+  const lower = errorMessage.toLowerCase();
+  return permanentPatterns.some(p => lower.includes(p));
+}
+
 // ============ CLIENTS ============
 
 const supabase = createClient(
@@ -992,7 +1100,15 @@ async function executeDelegatedSwapWithRetry(
   );
 
   if (!result) {
-    console.error(`Failed to execute delegated swap after ${attempts} attempts:`, error?.message);
+    const errorMsg = error?.message || '';
+    // Try to decode error selector from the message
+    const selectorMatch = errorMsg.match(/0x[a-fA-F0-9]{8}/);
+    const decodedError = selectorMatch ? decodeErrorSelector(selectorMatch[0]) : errorMsg;
+    const isPermanent = isPermanentFailure(errorMsg);
+    
+    console.error(`[Swap Failed] After ${attempts} attempts for ${delegation.user_address}:`);
+    console.error(`  Decoded: ${decodedError}`);
+    console.error(`  Permanent: ${isPermanent}`);
   }
 
   return { txHash: result, retryInfo: { attempts, lastError: error } };
@@ -1062,7 +1178,14 @@ async function executeDelegatedSwap(
   );
 
   if (!result) {
-    console.error(`Failed to execute delegated swap after ${attempts} attempts:`, error?.message);
+    const errorMsg = error?.message || '';
+    const selectorMatch = errorMsg.match(/0x[a-fA-F0-9]{8}/);
+    const decodedError = selectorMatch ? decodeErrorSelector(selectorMatch[0]) : errorMsg;
+    const isPermanent = isPermanentFailure(errorMsg);
+    
+    console.error(`[Swap Failed] After ${attempts} attempts for ${delegation.user_address}:`);
+    console.error(`  Decoded: ${decodedError}`);
+    console.error(`  Permanent: ${isPermanent}`);
   }
 
   return { txHash: result, retryInfo: { attempts, lastError: error } };
@@ -1520,9 +1643,10 @@ async function processApprovals(delegations: DelegationRecord[], isBuy: boolean)
     return;
   }
 
-  // Use nonce key range 0-999 for Phase 1 approvals (Phase 2 uses Date.now() which is ~1.7 trillion)
-  // Each wallet needs up to 2 nonce keys (ERC20 + Permit2), so multiply index by 2
-  const PHASE1_NONCE_BASE = 0n;
+  // Use timestamp-based nonce keys to ensure uniqueness across runs
+  // Previous approach using 0-999 failed when nonces were already used on-chain
+  // Now we use a timestamp base (distinct from Phase 2 by using a different offset)
+  const PHASE1_NONCE_BASE = BigInt(Date.now()) * 1000n; // Multiply by 1000 to separate from Phase 2 range
 
   console.log(`[Phase 1] Submitting ${needsApproval.length} approval UserOps in parallel...`);
   console.log(`[Phase 1] Nonce key range: ${PHASE1_NONCE_BASE} - ${PHASE1_NONCE_BASE + BigInt(needsApproval.length * 2 - 1)}`);
@@ -1939,7 +2063,7 @@ async function runDCA() {
     return;
   }
 
-  // Filter out delegations with outdated delegate addresses
+  // Filter out delegations with outdated delegate addresses or invalid caveats
   const EXPECTED_DELEGATE = '0xc472e866045d2e9ABd2F2459cE3BDB275b72C7e1'.toLowerCase();
   const delegations = allDelegations.filter(d => {
     // Parse delegation_data to get the delegate address
@@ -1949,15 +2073,28 @@ async function runDCA() {
     // delegate is at top level of the delegation object
     const delegate = signedDelegation?.delegate;
     
+    console.log(`\n[Validate] Checking ${d.user_address}...`);
+    
     if (!delegate) {
-      console.log(`[Skip] Wallet ${d.user_address} has no delegate in delegation_data, skipping`);
+      console.log(`  [Skip] No delegate in delegation_data`);
       return false;
     }
+    
     const delegateMatch = delegate.toLowerCase() === EXPECTED_DELEGATE;
     if (!delegateMatch) {
-      console.log(`[Skip] Wallet ${d.user_address} has outdated delegation (delegate: ${delegate}), skipping`);
+      console.log(`  [Skip] Outdated delegation (delegate: ${delegate})`);
+      return false;
     }
-    return delegateMatch;
+    
+    // Validate caveats (timestamp, limits, etc.)
+    const caveatValidation = validateDelegationCaveats(signedDelegation);
+    if (!caveatValidation.valid) {
+      console.log(`  [Skip] Caveat validation failed: ${caveatValidation.reason}`);
+      return false;
+    }
+    
+    console.log(`  ✓ Delegation valid`);
+    return true;
   });
 
   console.log(`Valid delegations after filtering: ${delegations.length}`);
