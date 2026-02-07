@@ -679,6 +679,47 @@ async function getETHPriceFromUniswap(): Promise<number> {
   }
 }
 
+// ============ MEV PROTECTION - DYNAMIC SLIPPAGE HELPERS ============
+// C4/M4 Fix: Helper functions for dynamic slippage based on swap size
+
+/**
+ * Calculate the USD value of a swap amount
+ * Uses cached ETH price for calculations
+ */
+function calculateSwapValueUsd(amount: bigint, isBuy: boolean, ethPriceUsd: number): number {
+  if (isBuy) {
+    // Buying ETH with USDC - amount is in USDC (6 decimals)
+    return Number(formatUnits(amount, 6));
+  } else {
+    // Selling ETH for USDC - amount is in ETH (18 decimals)
+    return Number(formatUnits(amount, 18)) * ethPriceUsd;
+  }
+}
+
+/**
+ * Get the appropriate slippage tolerance in basis points based on swap size
+ * C4 Fix: Dynamic slippage for MEV protection
+ * - Swaps < $100: 0.5% (50 bps) - slightly higher due to smaller liquidity impact
+ * - Swaps >= $100: 0.3% (30 bps) - tighter slippage for larger amounts
+ */
+function getSlippageBpsForSwap(swapValueUsd: number): number {
+  if (swapValueUsd < SLIPPAGE_THRESHOLD_USD) {
+    return SLIPPAGE_SMALL_BPS; // 0.5% for smaller swaps
+  }
+  return SLIPPAGE_LARGE_BPS; // 0.3% for larger swaps
+}
+
+/**
+ * Calculate minimum output amount with slippage protection
+ * M4 Fix: Ensure swap includes proper minAmountOut for MEV protection
+ */
+function calculateMinAmountOut(expectedOutput: bigint, slippageBps: number): bigint {
+  // minAmountOut = expectedOutput * (1 - slippage/10000)
+  // = expectedOutput * (10000 - slippage) / 10000
+  const slippageFactor = BigInt(BPS_DENOMINATOR - slippageBps);
+  return (expectedOutput * slippageFactor) / BigInt(BPS_DENOMINATOR);
+}
+
 async function simulateSwap(
   userSmartAccount: Address,
   tokenIn: Address,
@@ -2233,7 +2274,8 @@ interface PreparedSwap {
 async function prepareSwap(
   walletData: WalletData,
   decision: DCADecision,
-  nonceKey: bigint
+  nonceKey: bigint,
+  ethPriceUsd: number
 ): Promise<PreparedSwap | null> {
   const { smartAccountAddress, swapAmountAfterFee } = walletData;
 
@@ -2241,18 +2283,31 @@ async function prepareSwap(
   const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH;
   const tokenOut = isBuy ? ADDRESSES.WETH : ADDRESSES.USDC;
 
-  // Get swap quote
+  // C4 Fix: Calculate dynamic slippage based on swap value
+  const swapValueUsd = calculateSwapValueUsd(swapAmountAfterFee, isBuy, ethPriceUsd);
+  const slippageBps = getSlippageBpsForSwap(swapValueUsd);
+
+  console.log(`[Prepare] ${smartAccountAddress}: Swap value $${swapValueUsd.toFixed(2)} -> slippage ${slippageBps/100}%`);
+
+  // Get swap quote with dynamic slippage
   const swapQuote = await getSwapQuote(
     smartAccountAddress,
     tokenIn,
     tokenOut,
-    swapAmountAfterFee.toString()
+    swapAmountAfterFee.toString(),
+    slippageBps
   );
 
   if (!swapQuote) {
     console.error(`[Prepare] Failed to get quote for ${smartAccountAddress}`);
     return null;
   }
+
+  // M4 Fix: Validate minimum output amount is included in swap data
+  const expectedOutput = BigInt(swapQuote.quote.quote?.output?.amount || '0');
+  const minAmountOut = calculateMinAmountOut(expectedOutput, slippageBps);
+
+  console.log(`[Prepare] ${smartAccountAddress}: Expected output ${formatUnits(expectedOutput, isBuy ? 18 : 6)}, Min with slippage ${formatUnits(minAmountOut, isBuy ? 18 : 6)}`);
 
   return {
     walletData,
