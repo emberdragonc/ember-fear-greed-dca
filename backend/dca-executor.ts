@@ -2209,7 +2209,8 @@ async function buildUserOpForSwap(
     }];
 
     // Build the UserOperation manually for batching
-    const userOp = await backendSmartAccount.getUserOperation({
+    const userOp = await bundlerClient.prepareUserOperation({
+      account: backendSmartAccount,
       nonce,
       calls,
       paymaster: pimlicoPaymasterClient,
