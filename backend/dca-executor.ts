@@ -1946,7 +1946,8 @@ async function runDCA() {
     const signedDelegation = typeof d.delegation_data === 'string'
       ? JSON.parse(d.delegation_data)
       : d.delegation_data;
-    const delegate = signedDelegation?.delegation?.delegate;
+    // delegate is at top level of the delegation object
+    const delegate = signedDelegation?.delegate;
     
     if (!delegate) {
       console.log(`[Skip] Wallet ${d.user_address} has no delegate in delegation_data, skipping`);
