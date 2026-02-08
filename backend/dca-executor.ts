@@ -1328,10 +1328,11 @@ async function getSwapQuote(
   swapper: Address,
   tokenIn: Address,
   tokenOut: Address,
-  amount: string
+  amount: string,
+  slippageToleranceBps?: number
 ): Promise<{ quote: any; swap: any; retryInfo: { attempts: number; lastError: string | null } } | null> {
   const { result, error, attempts } = await withRetry(
-    () => getSwapQuoteInternal(swapper, tokenIn, tokenOut, amount),
+    () => getSwapQuoteInternal(swapper, tokenIn, tokenOut, amount, slippageToleranceBps),
     { operation: 'getSwapQuote' }
   );
 
@@ -2811,7 +2812,7 @@ async function processUserDCA(
     };
   }
 
-  const percentage = BigInt(Math.floor(decision.percentage * 100));
+  const percentage = BigInt(Math.round(decision.percentage * 100));
   let swapAmount = (balance * percentage) / 10000n;
   const maxAmount = BigInt(delegation.max_amount_per_swap);
   if (swapAmount > maxAmount) {
@@ -2820,6 +2821,21 @@ async function processUserDCA(
 
   const fee = calculateFee(swapAmount);
   const swapAmountAfterFee = swapAmount - fee;
+
+  // FIX H1: Balance check after fee calculation (same as processSwapsParallel)
+  if (balance < swapAmount) {
+    return {
+      success: false,
+      txHash: null,
+      error: `Insufficient balance: ${formatUnits(balance, tokenDecimals)} ${tokenSymbol} < ${formatUnits(swapAmount, tokenDecimals)} ${tokenSymbol}`,
+      errorType: 'revert',
+      amountIn: '0',
+      amountOut: '0',
+      feeCollected: '0',
+      retryCount: 0,
+      lastError: `Insufficient balance: ${formatUnits(balance, tokenDecimals)} ${tokenSymbol}`,
+    };
+  }
 
   // C4/M4 Fix: Calculate dynamic slippage based on swap value
   const price = _cachedEthPriceUsd ?? 2500;
