@@ -109,6 +109,21 @@ User funds are protected by multiple layers:
 
 ---
 
+## Security
+
+This protocol has undergone a comprehensive 3-perspective security audit (Correctness, Adversarial, Economic).
+
+See [SECURITY_AUDIT.md](./SECURITY_AUDIT.md) for the full report.
+
+### Key Security Features
+- Multi-source Fear & Greed oracle with BTC backup
+- MEV protection via dynamic slippage (0.3-0.5%)
+- Uniswap router whitelist validation
+- Anti-griefing measures ($10 minimum, rate limiting)
+- Quote freshness validation (30s expiry)
+
+---
+
 ## Contract Addresses (Base Mainnet)
 
 | Contract | Address |

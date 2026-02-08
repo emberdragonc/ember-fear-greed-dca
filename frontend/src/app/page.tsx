@@ -269,14 +269,29 @@ export default function Home() {
                   { 
                     icon: '👁️', 
                     title: 'Open Source', 
-                    desc: 'Full source code available. Verify everything yourself.' 
+                    desc: 'Full source code available. Verify everything yourself.',
+                    link: 'https://github.com/emberdragonc/ember-fear-greed-dca',
+                    linkText: 'View on GitHub →'
                   },
                 ].map((item, i) => (
-                  <div key={i} className="p-4 rounded-xl bg-white/5 border border-white/10 text-left flex gap-3">
+                  <div key={i} className="p-4 rounded-xl bg-white/5 border border-white/10 text-left flex gap-3 hover:bg-white/[0.07] transition-colors">
                     <span className="text-xl">{item.icon}</span>
-                    <div>
+                    <div className="flex-1">
                       <p className="font-medium text-white text-sm">{item.title}</p>
                       <p className="text-xs text-gray-500 mt-0.5">{item.desc}</p>
+                      {item.link && (
+                        <a 
+                          href={item.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-blue-400 hover:text-blue-300 mt-2 inline-flex items-center gap-1 transition-colors"
+                        >
+                          {item.linkText}
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                          </svg>
+                        </a>
+                      )}
                     </div>
                   </div>
                 ))}
