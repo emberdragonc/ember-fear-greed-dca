@@ -84,9 +84,14 @@ function classifyError(error: unknown): ClassifiedError {
   }
 
   // ERC-4337 / account abstraction permanent errors (NOT retryable)
-  if (errorString.includes('aa24') ||
+  if (errorString.includes('aa10') ||
+      errorString.includes('aa23') ||
+      errorString.includes('aa24') ||
       errorString.includes('aa25') ||
       errorString.includes('aa31') ||
+      errorString.includes('aa33') ||
+      errorString.includes('useroperation reverted') ||
+      errorString.includes('out of gas') ||
       errorString.includes('signature error') ||
       errorString.includes('could not find an account') ||
       errorString.includes('not a valid hex address') ||
@@ -293,6 +298,7 @@ interface ExecutionResult {
   feeCollected: string;
   retryCount: number;
   lastError: string | null;
+  walletAddress?: string; // Smart account address for explicit result-to-wallet mapping
 }
 
 // ============ ERROR SELECTORS & CAVEAT VALIDATION ============
@@ -2638,6 +2644,7 @@ async function processSwapsParallel(
           feeCollected: '0',
           retryCount: 1,
           lastError: 'Quote fetch failed',
+          walletAddress: walletData.smartAccountAddress,
         });
       }
       if (!isLastBatch) await sleep(BATCH_DELAY_MS);
@@ -2668,49 +2675,54 @@ async function processSwapsParallel(
           feeCollected: '0',
           retryCount: 0,
           lastError: 'UserOp build failed',
+          walletAddress: preparedSwap.walletData.smartAccountAddress,
         });
       }
       if (!isLastBatch) await sleep(BATCH_DELAY_MS);
       continue;
     }
 
+    // Step 2.5: Pre-send quote expiration check (reject stale quotes BEFORE sending UserOps)
+    const freshBatchItems: UserOpBatchItem[] = [];
+    const batchExecutionResults: ExecutionResult[] = [];
+    const processedWallets = new Set<string>();
+
+    for (const batchItem of validBatchItems) {
+      const now = Date.now();
+      const quoteAge = now - batchItem.swapQuote.timestamp;
+      if (quoteAge > QUOTE_VALIDITY_MS) {
+        console.warn(`[Phase 2] ⚠️ ${batchItem.walletData.smartAccountAddress}: Quote expired before send (${quoteAge}ms old, max ${QUOTE_VALIDITY_MS}ms) - skipping`);
+        processedWallets.add(batchItem.walletData.smartAccountAddress);
+        batchExecutionResults.push({
+          success: false,
+          txHash: null,
+          error: `Quote expired before send: ${quoteAge}ms old`,
+          errorType: 'quote_expired',
+          amountIn: batchItem.walletData.swapAmountAfterFee.toString(),
+          amountOut: '0',
+          feeCollected: '0',
+          retryCount: 0,
+          lastError: `Quote expired before send: ${quoteAge}ms old`,
+          walletAddress: batchItem.walletData.smartAccountAddress,
+        });
+      } else {
+        freshBatchItems.push(batchItem);
+      }
+    }
+
     // Step 3: Send batched UserOperations in parallel with proper signing
-    console.log(`[Phase 2]   Step 3: Sending ${validBatchItems.length} UserOps in parallel via bundlerClient...`);
-    const batchResults = await sendBatchedUserOps(validBatchItems, backendSmartAccount);
+    console.log(`[Phase 2]   Step 3: Sending ${freshBatchItems.length} UserOps in parallel via bundlerClient...`);
+    const batchResults = await sendBatchedUserOps(freshBatchItems, backendSmartAccount);
 
     // Step 4: Wait for receipts
     console.log(`[Phase 2]   Step 4: Waiting for on-chain confirmation...`);
     const receiptMap = await waitForBatchedUserOpReceipts(batchResults);
 
-    // Step 5: Build ExecutionResults
-    const batchExecutionResults: ExecutionResult[] = [];
-
-    // Process results for wallets that were in the batch
-    const processedWallets = new Set<string>();
-
-    for (const batchItem of validBatchItems) {
+    // Step 5: Build ExecutionResults for sent UserOps
+    for (const batchItem of freshBatchItems) {
       const { walletData, swapQuote } = batchItem;
       const receipt = receiptMap.get(walletData.smartAccountAddress);
       processedWallets.add(walletData.smartAccountAddress);
-
-      // Quote expiration check (Economic Audit: stale quote protection)
-      const now = Date.now();
-      const quoteAge = now - swapQuote.timestamp;
-      if (quoteAge > QUOTE_VALIDITY_MS) {
-        console.warn(`[Phase 2] ⚠️ ${walletData.smartAccountAddress}: Quote expired (${quoteAge}ms old, max ${QUOTE_VALIDITY_MS}ms) - skipping this wallet`);
-        batchExecutionResults.push({
-          success: false,
-          txHash: null,
-          error: `Quote expired: ${quoteAge}ms old`,
-          errorType: 'quote_expired',
-          amountIn: walletData.swapAmountAfterFee.toString(),
-          amountOut: '0',
-          feeCollected: '0',
-          retryCount: 0,
-          lastError: `Quote expired: ${quoteAge}ms old`,
-        });
-        continue;
-      }
 
       if (receipt?.success && receipt.txHash) {
         // Success!
@@ -2725,6 +2737,7 @@ async function processSwapsParallel(
           feeCollected: walletData.fee.toString(),
           retryCount: 0,
           lastError: null,
+          walletAddress: walletData.smartAccountAddress,
         });
       } else {
         // Failed
@@ -2740,6 +2753,7 @@ async function processSwapsParallel(
           feeCollected: '0',
           retryCount: 0,
           lastError: errorMsg,
+          walletAddress: walletData.smartAccountAddress,
         });
       }
     }
@@ -2757,6 +2771,7 @@ async function processSwapsParallel(
           feeCollected: '0',
           retryCount: 1,
           lastError: 'Quote or UserOp build failed',
+          walletAddress: walletData.smartAccountAddress,
         });
       }
     }
@@ -2794,6 +2809,9 @@ async function retrySwapWithOriginalAmounts(
   console.log(`[RETRY] Using original amount: ${formatUnits(swapAmountAfterFee, tokenDecimals)} ${tokenSymbol}`);
 
   // Verify balance is still sufficient (don't recalculate amount)
+  // NOTE: We check against swapAmount (pre-fee) intentionally, not swapAmountAfterFee,
+  // because the wallet needs enough balance to cover both the swap amount AND the fee.
+  // swapAmount = swapAmountAfterFee + fee, so this ensures the full amount is available.
   const balance = isBuy ? await getUSDCBalance(smartAccountAddress as Address) : await getETHBalance(smartAccountAddress as Address);
   if (balance < walletData.swapAmount) {
     return {
@@ -3190,10 +3208,10 @@ async function runDCA() {
   let successCount = 0;
   const failedDelegations: { delegation: DelegationRecord; error: string; originalWalletData?: WalletData }[] = [];
 
-  const walletDataArray = Array.from(walletDataMap.values());
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
-    const walletData = walletDataArray[i];
+    // Use explicit walletAddress from result instead of array index (fixes ordering mismatch)
+    const walletData = result.walletAddress ? walletDataMap.get(result.walletAddress) : undefined;
 
     if (walletData) {
       await logExecution(
@@ -3235,8 +3253,21 @@ async function runDCA() {
           // Use original wallet data to avoid recalculating amounts (balance may have changed)
           result = await retrySwapWithOriginalAmounts(originalWalletData, decision, fg?.value ?? 50);
         } else {
-          // Fallback to legacy processUserDCA if no original data
-          result = await processUserDCA(delegation, decision, fg?.value ?? 50);
+          // No original wallet data available - skip retry to avoid recalculating amounts
+          // from current balance (which may have changed since the original attempt).
+          // This should not happen since we always pass originalWalletData from processSwapsParallel.
+          console.warn(`[RETRY] ⚠️ ${delegation.smart_account_address}: No original wallet data - skipping retry to avoid amount recalculation`);
+          result = {
+            success: false,
+            txHash: null,
+            error: 'Retry skipped: no original wallet data available',
+            errorType: 'unknown',
+            amountIn: '0',
+            amountOut: '0',
+            feeCollected: '0',
+            retryCount: 0,
+            lastError: 'No original wallet data for safe retry',
+          };
         }
 
         // Mark as retry in the DB log
