@@ -261,13 +261,20 @@ export function FundWallet({ onFunded, hasDelegation = false, isCollapsible = tr
 
       {/* Status Message */}
       {!isFunded ? (
-        <div className="p-3 bg-yellow-500/10 rounded-xl border border-yellow-500/20">
-          <p className="text-sm text-yellow-400">
-            {hasDelegation 
-              ? `⚠️ Total balance below $${MIN_TOTAL_BALANCE}. Add funds to continue DCA.`
-              : `⚠️ Minimum $${MIN_INITIAL_USDC} USDC required to start DCA buying.`
-            }
-          </p>
+        <div className="space-y-2">
+          <div className="p-3 bg-yellow-500/10 rounded-xl border border-yellow-500/20">
+            <p className="text-sm text-yellow-400">
+              {hasDelegation 
+                ? `⚠️ Total balance below $${MIN_TOTAL_BALANCE}. Add funds to continue DCA.`
+                : `⚠️ Minimum $${MIN_INITIAL_USDC} USDC required to start DCA buying.`
+              }
+            </p>
+          </div>
+          <div className="p-3 bg-blue-500/10 rounded-xl border border-blue-500/20">
+            <p className="text-xs text-blue-300">
+              💡 <span className="font-medium">Recommended: Start with $100+.</span> If your total wallet value drops below $10, your strategy will pause until you add more funds.
+            </p>
+          </div>
         </div>
       ) : (
         <div className="p-3 bg-emerald-500/10 rounded-xl border border-emerald-500/20">

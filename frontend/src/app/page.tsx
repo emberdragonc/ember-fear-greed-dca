@@ -373,11 +373,11 @@ export default function Home() {
                     },
                     {
                       q: "How does the Fear & Greed strategy work?",
-                      a: "The bot buys ETH when sentiment is fearful and sells ETH when sentiment is greedy. Extreme Fear (0-24): Buys 2.5% of USDC balance. Fear (25-45): Buys 5% of USDC balance. Neutral (46-54): No action. Greed (55-75): Sells 2.5% of ETH balance. Extreme Greed (76-100): Sells 5% of ETH balance. Buy low, sell high — automatically."
+                      a: "The bot buys ETH when sentiment is fearful and sells ETH when sentiment is greedy. The more extreme the sentiment, the larger the percentage it swaps. On neutral days, it does nothing. Buy low, sell high — automatically."
                     },
                     {
                       q: "How often does the bot execute?",
-                      a: "The DCA bot runs once daily at 12:00 UTC. It only executes a swap if the Fear & Greed Index is in the Fear or Extreme Fear zone. On neutral or greedy days, it simply waits."
+                      a: "The DCA bot runs once daily at 12:00 UTC. In Fear or Extreme Fear, it buys ETH with a percentage of your USDC. In Greed or Extreme Greed, it sells a percentage of your ETH back to USDC. On neutral days (46-54), it sits tight."
                     },
                     {
                       q: "What tokens can I DCA into?",
