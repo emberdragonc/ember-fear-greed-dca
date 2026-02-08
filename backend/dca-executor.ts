@@ -2097,25 +2097,9 @@ async function processApprovals(delegations: DelegationRecord[], isBuy: boolean)
   }
 }
 
-// ============ JSON-RPC BATCHING UTILITIES ============
-
-interface JsonRpcRequest {
-  jsonrpc: '2.0';
-  method: string;
-  params: any[];
-  id: number;
-}
-
-interface JsonRpcResponse {
-  jsonrpc: '2.0';
-  id: number;
-  result?: any;
-  error?: {
-    code: number;
-    message: string;
-    data?: any;
-  };
-}
+// ============ PARALLEL USEROP SENDING UTILITIES ============
+// FIX: Removed manual JSON-RPC batching interfaces - now uses bundlerClient.sendUserOperation()
+// The bundlerClient handles signing properly, avoiding AA24 signature verification errors
 
 interface UserOpBatchItem {
   id: number;
@@ -2132,109 +2116,86 @@ interface BatchSendResult {
 }
 
 /**
- * Send multiple UserOperations to Pimlico bundler in a single JSON-RPC batch request
- * This reduces HTTP overhead from N requests to 1 request for N UserOps
+ * Send multiple UserOperations in parallel using bundlerClient.sendUserOperation()
+ * This ensures proper signing via viem/permissionless.js while still getting concurrency
+ * FIX: Replaced manual JSON-RPC batching which bypassed signing and caused AA24 errors
+ * 
+ * NOTE: We pre-build the UserOp with prepareUserOperation, sign it manually with the
+ * backend account, then pass the signed UserOp fields at the TOP LEVEL (not nested
+ * under userOperation). This avoids the internal re-preparation that happens when 
+ * account is passed, and satisfies the requirement for sender/signature at top level.
  */
 async function sendBatchedUserOps(
-  batchItems: UserOpBatchItem[]
+  batchItems: UserOpBatchItem[],
+  backendSmartAccount: any
 ): Promise<BatchSendResult[]> {
   if (batchItems.length === 0) {
     return [];
   }
 
   const startTime = Date.now();
-  console.log(`[Batch] Sending ${batchItems.length} UserOps in single JSON-RPC batch...`);
+  console.log(`[Batch] Sending ${batchItems.length} UserOps in parallel via bundlerClient...`);
 
-  // Build JSON-RPC batch request
-  // FIX: params[1] should be the entryPoint address, not chain ID
-  const ENTRY_POINT_V07 = '0x0000000071727De22E5E9d8BAf0edAc6f37da032';
-  const requests: JsonRpcRequest[] = batchItems.map((item, index) => ({
-    jsonrpc: '2.0',
-    method: 'eth_sendUserOperation',
-    params: [item.userOp, ENTRY_POINT_V07],
-    id: item.id,
-  }));
+  // Send all UserOps in parallel
+  const sendPromises = batchItems.map(async (item) => {
+    try {
+      // Sign the pre-built UserOp with the backend account
+      // The backend account acts as the delegate for the user's smart account
+      const signature = await backendSmartAccount.signUserOperation({
+        ...item.userOp,
+        chainId: base.id,
+      });
 
-  try {
-    // Send single HTTP request with batched JSON-RPC calls
-    // CRITICAL FIX: Use BigInt replacer to serialize UserOperations with BigInt values
-    const response = await fetch(PIMLICO_BUNDLER_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requests, (key, value) =>
-        typeof value === 'bigint' ? '0x' + value.toString(16) : value
-      ),
-    });
+      // Send the signed UserOp - spread fields at TOP LEVEL, not nested
+      // Do NOT pass account parameter (to avoid re-preparation)
+      // DO pass sender and signature at top level (required by viem)
+      // MUST pass entryPointAddress since we're not passing account
+      const ENTRY_POINT_V07 = '0x0000000071727De22E5E9d8BAf0edAc6f37da032';
+      const userOpHash = await bundlerClient.sendUserOperation({
+        sender: item.userOp.sender,
+        nonce: item.userOp.nonce,
+        factory: item.userOp.factory,
+        factoryData: item.userOp.factoryData,
+        callData: item.userOp.callData,
+        callGasLimit: item.userOp.callGasLimit,
+        verificationGasLimit: item.userOp.verificationGasLimit,
+        preVerificationGas: item.userOp.preVerificationGas,
+        maxFeePerGas: item.userOp.maxFeePerGas,
+        maxPriorityFeePerGas: item.userOp.maxPriorityFeePerGas,
+        paymaster: item.userOp.paymaster,
+        paymasterData: item.userOp.paymasterData,
+        paymasterVerificationGasLimit: item.userOp.paymasterVerificationGasLimit,
+        paymasterPostOpGasLimit: item.userOp.paymasterPostOpGasLimit,
+        signature,
+        entryPointAddress: ENTRY_POINT_V07,
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`[Batch] HTTP error ${response.status}: ${errorText.slice(0, 200)}`);
-      // Mark all as failed
-      return batchItems.map(item => ({
+      return {
+        success: true,
+        userOpHash,
+        error: null,
+        walletAddress: item.walletData.smartAccountAddress,
+      };
+    } catch (error: any) {
+      console.error(`[Batch] UserOp ${item.id} failed: ${error?.message}`);
+      return {
         success: false,
         userOpHash: null,
-        error: `HTTP ${response.status}: ${errorText.slice(0, 100)}`,
+        error: error?.message || 'Unknown error',
         walletAddress: item.walletData.smartAccountAddress,
-      }));
+      };
     }
+  });
 
-    const responses: JsonRpcResponse[] = await response.json();
-    const duration = Date.now() - startTime;
-    console.log(`[Batch] Received ${responses.length} responses in ${duration}ms`);
+  const results = await Promise.all(sendPromises);
+  const duration = Date.now() - startTime;
 
-    // Map responses back to batch items by ID
-    const results: BatchSendResult[] = [];
-    let successCount = 0;
-    let errorCount = 0;
+  const successCount = results.filter(r => r.success).length;
+  const errorCount = results.length - successCount;
 
-    for (const item of batchItems) {
-      const response = responses.find(r => r.id === item.id);
+  console.log(`[Batch] Completed in ${duration}ms: ${successCount} success, ${errorCount} errors`);
 
-      if (!response) {
-        errorCount++;
-        results.push({
-          success: false,
-          userOpHash: null,
-          error: 'No response for this batch item',
-          walletAddress: item.walletData.smartAccountAddress,
-        });
-        continue;
-      }
-
-      if (response.error) {
-        errorCount++;
-        results.push({
-          success: false,
-          userOpHash: null,
-          error: response.error.message || `JSON-RPC error ${response.error.code}`,
-          walletAddress: item.walletData.smartAccountAddress,
-        });
-        console.error(`[Batch] UserOp ${item.id} failed: ${response.error.message}`);
-      } else {
-        successCount++;
-        results.push({
-          success: true,
-          userOpHash: response.result,
-          error: null,
-          walletAddress: item.walletData.smartAccountAddress,
-        });
-      }
-    }
-
-    console.log(`[Batch] Results: ${successCount} success, ${errorCount} errors`);
-    return results;
-  } catch (error: any) {
-    console.error(`[Batch] Network error sending batch: ${error?.message || error}`);
-    // Mark all as failed
-    return batchItems.map(item => ({
-      success: false,
-      userOpHash: null,
-      error: error?.message || 'Network error',
-      walletAddress: item.walletData.smartAccountAddress,
-    }));
-  }
+  return results;
 }
 
 /**
@@ -2407,33 +2368,15 @@ async function buildUserOpForSwap(
       value: 0n,
     }];
 
-    // Build the UserOperation manually for batching
-    const rawUserOp = await bundlerClient.prepareUserOperation({
+    // Build the UserOperation using prepareUserOperation
+    // FIX: Pass the full rawUserOp to sendUserOperation() - it handles signing properly
+    // Previously we manually stripped fields for JSON-RPC batching which caused AA24 errors
+    const userOp = await bundlerClient.prepareUserOperation({
       account: backendSmartAccount,
       nonce,
       calls,
       paymaster: pimlicoPaymasterClient,
     });
-
-    // FIX: Extract only valid UserOperation fields for JSON-RPC batching
-    // The prepareUserOperation adds extra fields like 'account' that bundlers reject
-    const userOp = {
-      sender: rawUserOp.sender,
-      nonce: rawUserOp.nonce,
-      factory: rawUserOp.factory,
-      factoryData: rawUserOp.factoryData,
-      callData: rawUserOp.callData,
-      callGasLimit: rawUserOp.callGasLimit,
-      verificationGasLimit: rawUserOp.verificationGasLimit,
-      preVerificationGas: rawUserOp.preVerificationGas,
-      maxFeePerGas: rawUserOp.maxFeePerGas,
-      maxPriorityFeePerGas: rawUserOp.maxPriorityFeePerGas,
-      paymaster: rawUserOp.paymaster,
-      paymasterVerificationGasLimit: rawUserOp.paymasterVerificationGasLimit,
-      paymasterPostOpGasLimit: rawUserOp.paymasterPostOpGasLimit,
-      paymasterData: rawUserOp.paymasterData,
-      signature: rawUserOp.signature,
-    };
 
     return {
       id: Number(nonceKey), // Use nonceKey as unique ID
@@ -2705,9 +2648,9 @@ async function processSwapsParallel(
       continue;
     }
 
-    // Step 3: Send batched UserOperations - SINGLE HTTP REQUEST!
-    console.log(`[Phase 2]   Step 3: Sending ${validBatchItems.length} UserOps in single JSON-RPC batch...`);
-    const batchResults = await sendBatchedUserOps(validBatchItems);
+    // Step 3: Send batched UserOperations in parallel with proper signing
+    console.log(`[Phase 2]   Step 3: Sending ${validBatchItems.length} UserOps in parallel via bundlerClient...`);
+    const batchResults = await sendBatchedUserOps(validBatchItems, backendSmartAccount);
 
     // Step 4: Wait for receipts
     console.log(`[Phase 2]   Step 4: Waiting for on-chain confirmation...`);
