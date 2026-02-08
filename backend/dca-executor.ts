@@ -2933,7 +2933,7 @@ async function runDCA() {
   }
 
   // 2. Calculate decision
-  const decision = calculateDecision(fg);
+  const decision = calculateDecision(fg.value);
   console.log(`Decision: ${decision.reason}`);
 
   if (decision.action === 'hold') {
