@@ -285,6 +285,7 @@ interface ExecutionResult {
 const ERROR_SELECTORS: Record<string, string> = {
   '0xd81b2f2e': 'CaveatViolated - A delegation caveat enforcement failed',
   '0x155ff427': 'DelegationNotFound - Delegation hash not registered',
+  '0x3a91a018': 'ExecutionFailed - Generic execution failure in DelegationManager',
   '0x00000000': 'GenericRevert - Execution reverted without reason',
   '0x08c379a0': 'Error(string) - Standard revert with message',
   '0x4e487b71': 'Panic - Solidity panic (overflow, division by zero, etc)',
@@ -1743,7 +1744,7 @@ async function logExecution(
       fgValue,
       decision,
       result,
-    }, null, 2));
+    }, (key, value) => typeof value === 'bigint' ? '0x' + value.toString(16) : value, 2));
     // Don't throw - executor should continue even if logging fails
   }
 }
@@ -1771,7 +1772,9 @@ async function logFailedAttempt(
         error_type: errorInfo.type,
         error_message: errorInfo.message,
         retryable: errorInfo.retryable,
-        context: JSON.stringify(context),
+        context: JSON.stringify(context, (key, value) =>
+          typeof value === 'bigint' ? '0x' + value.toString(16) : value
+        ),
         created_at: new Date().toISOString(),
       });
       
@@ -2143,21 +2146,26 @@ async function sendBatchedUserOps(
   console.log(`[Batch] Sending ${batchItems.length} UserOps in single JSON-RPC batch...`);
 
   // Build JSON-RPC batch request
+  // FIX: params[1] should be the entryPoint address, not chain ID
+  const ENTRY_POINT_V07 = '0x0000000071727De22E5E9d8BAf0edAc6f37da032';
   const requests: JsonRpcRequest[] = batchItems.map((item, index) => ({
     jsonrpc: '2.0',
     method: 'eth_sendUserOperation',
-    params: [item.userOp, '0x2105'], // Base chain ID
+    params: [item.userOp, ENTRY_POINT_V07],
     id: item.id,
   }));
 
   try {
     // Send single HTTP request with batched JSON-RPC calls
+    // CRITICAL FIX: Use BigInt replacer to serialize UserOperations with BigInt values
     const response = await fetch(PIMLICO_BUNDLER_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(requests),
+      body: JSON.stringify(requests, (key, value) =>
+        typeof value === 'bigint' ? '0x' + value.toString(16) : value
+      ),
     });
 
     if (!response.ok) {
@@ -2400,12 +2408,32 @@ async function buildUserOpForSwap(
     }];
 
     // Build the UserOperation manually for batching
-    const userOp = await bundlerClient.prepareUserOperation({
+    const rawUserOp = await bundlerClient.prepareUserOperation({
       account: backendSmartAccount,
       nonce,
       calls,
       paymaster: pimlicoPaymasterClient,
     });
+
+    // FIX: Extract only valid UserOperation fields for JSON-RPC batching
+    // The prepareUserOperation adds extra fields like 'account' that bundlers reject
+    const userOp = {
+      sender: rawUserOp.sender,
+      nonce: rawUserOp.nonce,
+      factory: rawUserOp.factory,
+      factoryData: rawUserOp.factoryData,
+      callData: rawUserOp.callData,
+      callGasLimit: rawUserOp.callGasLimit,
+      verificationGasLimit: rawUserOp.verificationGasLimit,
+      preVerificationGas: rawUserOp.preVerificationGas,
+      maxFeePerGas: rawUserOp.maxFeePerGas,
+      maxPriorityFeePerGas: rawUserOp.maxPriorityFeePerGas,
+      paymaster: rawUserOp.paymaster,
+      paymasterVerificationGasLimit: rawUserOp.paymasterVerificationGasLimit,
+      paymasterPostOpGasLimit: rawUserOp.paymasterPostOpGasLimit,
+      paymasterData: rawUserOp.paymasterData,
+      signature: rawUserOp.signature,
+    };
 
     return {
       id: Number(nonceKey), // Use nonceKey as unique ID
