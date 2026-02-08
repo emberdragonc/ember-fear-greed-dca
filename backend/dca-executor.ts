@@ -71,7 +71,8 @@ function classifyError(error: unknown): ClassifiedError {
   // Rate limit errors (retryable with longer backoff)
   if (errorString.includes('rate limit') ||
       errorString.includes('429') ||
-      errorString.includes('too many requests')) {
+      errorString.includes('too many requests') ||
+      errorString.includes('exceeded')) {
     return { type: 'rate_limit', message: errorMessage, originalError: error, retryable: true };
   }
 
@@ -612,7 +613,7 @@ function calculateDecision(fgValue: number): DCADecision {
 
 // ============ DRY-RUN SIMULATION ============
 
-const MIN_WALLET_VALUE_USD = 5; // Minimum total wallet value to qualify for swaps
+const MIN_WALLET_VALUE_USD = 5; // Minimum total wallet value for simulation
 
 interface SimulationResult {
   wallet: string;
@@ -625,10 +626,28 @@ interface SimulationResult {
 
 // Cached ETH price derived from Uniswap quote
 let _cachedEthPriceUsd: number | null = null;
+let _ethPriceCacheTimestamp: number | null = null;
+const ETH_PRICE_CACHE_TTL_MS = 60000; // 60 seconds cache TTL
+
+// ============ ECONOMIC AUDIT FIXES ============
+// 1. Minimum Delegation Value ($10) - Griefing protection
+const MIN_DELEGATION_VALUE_USD = 10; // Skip wallets with value below $10
+
+// 2. Quote Expiration Check - Stale quote protection
+const QUOTE_VALIDITY_MS = 30000; // 30 seconds quote validity
+
+// 3. Rate Limiting on Quote API - Resource exhaustion protection
+let _quoteCounter = 0;
+const MAX_QUOTES_PER_CYCLE = 100;
 
 async function getETHPriceFromUniswap(): Promise<number> {
-  // Return cached price if available
-  if (_cachedEthPriceUsd !== null) {
+  // Check if cached price is still valid (not expired)
+  const now = Date.now();
+  if (
+    _cachedEthPriceUsd !== null &&
+    _ethPriceCacheTimestamp !== null &&
+    (now - _ethPriceCacheTimestamp) < ETH_PRICE_CACHE_TTL_MS
+  ) {
     return _cachedEthPriceUsd;
   }
 
@@ -668,13 +687,20 @@ async function getETHPriceFromUniswap(): Promise<number> {
     // wethReceived is in 18 decimals, so: ethPrice = 1e18 / wethReceived
     const ethPrice = Number(1e18) / Number(wethReceived);
     _cachedEthPriceUsd = ethPrice;
+    _ethPriceCacheTimestamp = now; // Track when price was fetched
 
     console.log(`[ETH Price] Derived from Uniswap: $${ethPrice.toFixed(2)}`);
     return ethPrice;
   } catch (error) {
     console.error('[ETH Price] Failed to get price from Uniswap:', error);
+    // Fallback to cached price if available, even if stale
+    if (_cachedEthPriceUsd !== null) {
+      console.log(`[ETH Price] Using stale cached price: $${_cachedEthPriceUsd.toFixed(2)}`);
+      return _cachedEthPriceUsd;
+    }
     // Fallback to $2500
     _cachedEthPriceUsd = 2500;
+    _ethPriceCacheTimestamp = now;
     return 2500;
   }
 }
@@ -777,7 +803,7 @@ async function runDryRunSimulation(
   // Fetch ETH price from Uniswap for all calculations
   const ethPriceUsd = await getETHPriceFromUniswap();
   console.log(`ETH Price: $${ethPriceUsd.toFixed(2)} (derived from Uniswap)`);
-  console.log(`Min wallet value: $${MIN_WALLET_VALUE_USD}\n`);
+  console.log(`Min wallet value: $${MIN_DELEGATION_VALUE_USD} (griefing protection)\n`);
 
   const results: SimulationResult[] = [];
   const isBuy = decision.action === 'buy';
@@ -794,15 +820,15 @@ async function runDryRunSimulation(
     const ethValueUsd = Number(formatUnits(ethBalance, 18)) * ethPriceUsd;
     const totalValueUsd = usdcValueUsd + ethValueUsd;
     
-    // Skip if total wallet value < $5
-    if (totalValueUsd < MIN_WALLET_VALUE_USD) {
+    // Skip if total wallet value < $10 (griefing protection)
+    if (totalValueUsd < MIN_DELEGATION_VALUE_USD) {
       results.push({
         wallet: userSmartAccount.slice(0, 10),
         totalValueUsd: totalValueUsd.toFixed(2),
         balance: isBuy ? formatUnits(usdcBalance, 6) : formatUnits(ethBalance, 18),
         amountToSwap: '0',
         status: 'SKIP',
-        reason: `Total value $${totalValueUsd.toFixed(2)} < $${MIN_WALLET_VALUE_USD} min`
+        reason: `Total value $${totalValueUsd.toFixed(2)} < $${MIN_DELEGATION_VALUE_USD} min (griefing protection)`
       });
       continue;
     }
@@ -1253,13 +1279,26 @@ function calculateAmountAfterFee(amount: bigint): bigint {
 
 // ============ SWAP EXECUTION VIA USEROP ============
 
+// Quote tracking for expiration check
+interface QuoteWithTimestamp {
+  quote: any;
+  swap: any;
+  timestamp: number; // When quote was fetched
+}
+
 async function getSwapQuoteInternal(
   swapper: Address,
   tokenIn: Address,
   tokenOut: Address,
   amount: string,
   slippageToleranceBps: number = SLIPPAGE_LARGE_BPS
-): Promise<{ quote: any; swap: any }> {
+): Promise<QuoteWithTimestamp> {
+  // Rate limiting check
+  _quoteCounter++;
+  if (_quoteCounter > MAX_QUOTES_PER_CYCLE) {
+    throw new Error(`Quote API rate limit exceeded: ${_quoteCounter}/${MAX_QUOTES_PER_CYCLE} quotes requested this cycle`);
+  }
+
   // C4/M4 Fix: Use dynamic slippage tolerance for MEV protection
   // Convert bps to percentage (e.g., 30 bps = 0.3%)
   const slippageTolerance = slippageToleranceBps / 100;
@@ -1292,7 +1331,8 @@ async function getSwapQuoteInternal(
   }
 
   const quoteData = await quoteRes.json();
-  console.log(`[Quote API] Quote received successfully`);
+  const quoteTimestamp = Date.now(); // Track when quote was fetched
+  console.log(`[Quote API] Quote received successfully at ${quoteTimestamp}`);
 
   // Get swap transaction
   const { permitData, permitTransaction, ...cleanQuote } = quoteData;
@@ -1321,7 +1361,7 @@ async function getSwapQuoteInternal(
   console.log(`[Quote API] Router whitelist check passed: ${swapData.swap.to}`);
   
   console.log(`[Quote API] Swap data received successfully`);
-  return { quote: quoteData, swap: swapData.swap };
+  return { quote: quoteData, swap: swapData.swap, timestamp: quoteTimestamp };
 }
 
 async function getSwapQuote(
@@ -1330,7 +1370,7 @@ async function getSwapQuote(
   tokenOut: Address,
   amount: string,
   slippageToleranceBps?: number
-): Promise<{ quote: any; swap: any; retryInfo: { attempts: number; lastError: string | null } } | null> {
+): Promise<{ quote: any; swap: any; timestamp: number; retryInfo: { attempts: number; lastError: string | null } } | null> {
   const { result, error, attempts } = await withRetry(
     () => getSwapQuoteInternal(swapper, tokenIn, tokenOut, amount, slippageToleranceBps),
     { operation: 'getSwapQuote' }
@@ -2504,9 +2544,9 @@ async function processSwapsParallel(
       const ethValueUsd = Number(formatUnits(ethBalance, 18)) * ethPriceUsd;
       const totalValueUsd = usdcValueUsd + ethValueUsd;
 
-      // Skip if total wallet value < $5
-      if (totalValueUsd < MIN_WALLET_VALUE_USD) {
-        console.log(`[Phase 2] ${smartAccountAddress}: Total value $${totalValueUsd.toFixed(2)} < $${MIN_WALLET_VALUE_USD} minimum`);
+      // Skip if total wallet value < $10 (Economic Audit: griefing protection)
+      if (totalValueUsd < MIN_DELEGATION_VALUE_USD) {
+        console.log(`[Phase 2] ${smartAccountAddress}: Total value $${totalValueUsd.toFixed(2)} < $${MIN_DELEGATION_VALUE_USD} minimum - skipping (griefing protection)`);
         return;
       }
 
@@ -2655,6 +2695,25 @@ async function processSwapsParallel(
       const { walletData, swapQuote } = batchItem;
       const receipt = receiptMap.get(walletData.smartAccountAddress);
       processedWallets.add(walletData.smartAccountAddress);
+
+      // Quote expiration check (Economic Audit: stale quote protection)
+      const now = Date.now();
+      const quoteAge = now - swapQuote.timestamp;
+      if (quoteAge > QUOTE_VALIDITY_MS) {
+        console.warn(`[Phase 2] ⚠️ ${walletData.smartAccountAddress}: Quote expired (${quoteAge}ms old, max ${QUOTE_VALIDITY_MS}ms) - skipping this wallet`);
+        batchExecutionResults.push({
+          success: false,
+          txHash: null,
+          error: `Quote expired: ${quoteAge}ms old`,
+          errorType: 'quote_expired',
+          amountIn: walletData.swapAmountAfterFee.toString(),
+          amountOut: '0',
+          feeCollected: '0',
+          retryCount: 0,
+          lastError: `Quote expired: ${quoteAge}ms old`,
+        });
+        continue;
+      }
 
       if (receipt?.success && receipt.txHash) {
         // Success!
