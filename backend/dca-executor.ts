@@ -9,6 +9,7 @@
 
 // ============ CLI FLAGS ============
 const DRY_RUN = process.argv.includes('--dry-run');
+const TARGET_WALLET = process.argv.find(a => a.startsWith('--wallet='))?.split('=')[1]?.toLowerCase();
 
 import {
   createPublicClient,
@@ -82,6 +83,21 @@ function classifyError(error: unknown): ClassifiedError {
     return { type: 'quote_expired', message: errorMessage, originalError: error, retryable: true };
   }
 
+  // ERC-4337 / account abstraction permanent errors (NOT retryable)
+  if (errorString.includes('aa24') ||
+      errorString.includes('aa25') ||
+      errorString.includes('aa31') ||
+      errorString.includes('signature error') ||
+      errorString.includes('could not find an account') ||
+      errorString.includes('not a valid hex address') ||
+      errorString.includes('unrecognized key') ||
+      errorString.includes('do not know how to serialize a bigint') ||
+      errorString.includes('cannot serialize') ||
+      errorString.includes('delegation missing signature') ||
+      errorString.includes('invalid delegation')) {
+    return { type: 'revert', message: errorMessage, originalError: error, retryable: false };
+  }
+
   // Revert errors (NOT retryable - will fail again)
   if (errorString.includes('revert') ||
       errorString.includes('execution reverted') ||
@@ -90,8 +106,8 @@ function classifyError(error: unknown): ClassifiedError {
     return { type: 'revert', message: errorMessage, originalError: error, retryable: false };
   }
 
-  // Unknown errors - may be retryable
-  return { type: 'unknown', message: errorMessage, originalError: error, retryable: true };
+  // Unknown errors - NOT retryable by default (conservative approach)
+  return { type: 'unknown', message: errorMessage, originalError: error, retryable: false };
 }
 
 // Retry configuration
@@ -1703,6 +1719,15 @@ async function getActiveDelegations(): Promise<DelegationRecord[]> {
     console.error('[DB] Failed to fetch delegations after retries:', error?.message);
     return [];
   }
+  // Filter to single wallet if --wallet flag provided
+  if (TARGET_WALLET) {
+    const filtered = result.filter((d: DelegationRecord) => 
+      d.smart_account_address?.toLowerCase() === TARGET_WALLET ||
+      d.user_address?.toLowerCase() === TARGET_WALLET
+    );
+    console.log(`[Filter] --wallet flag: ${result.length} → ${filtered.length} delegations`);
+    return filtered;
+  }
   return result;
 }
 
@@ -1711,7 +1736,8 @@ async function logExecution(
   userAddress: string,
   fgValue: number,
   decision: DCADecision,
-  result: ExecutionResult
+  result: ExecutionResult,
+  isRetry: boolean = false
 ) {
   const { error, attempts } = await withRetry(
     async () => {
@@ -1723,8 +1749,8 @@ async function logExecution(
         amount_out: result.amountOut,
         fee_collected: result.feeCollected,
         tx_hash: result.txHash,
-        status: result.success ? 'success' : 'failed',
-        error_message: result.error,
+        status: result.success ? 'success' : (isRetry ? 'retry_failed' : 'failed'),
+        error_message: isRetry ? `[RETRY] ${result.error || ''}` : result.error,
         error_type: result.errorType,
         retry_count: result.retryCount,
         last_error: result.lastError,
@@ -2752,6 +2778,101 @@ async function processSwapsParallel(
   return { results: allResults, walletDataMap };
 }
 
+// Retry with original amounts (no recalculation) - uses legacy EOA path
+async function retrySwapWithOriginalAmounts(
+  walletData: WalletData,
+  decision: DCADecision,
+  fgValue: number
+): Promise<ExecutionResult> {
+  const { delegation, smartAccountAddress, swapAmountAfterFee, fee } = walletData;
+  const isBuy = decision.action === 'buy';
+  const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH;
+  const tokenOut = isBuy ? ADDRESSES.WETH : ADDRESSES.USDC;
+  const tokenDecimals = isBuy ? 6 : 18;
+  const tokenSymbol = isBuy ? 'USDC' : 'ETH';
+
+  console.log(`[RETRY] Using original amount: ${formatUnits(swapAmountAfterFee, tokenDecimals)} ${tokenSymbol}`);
+
+  // Verify balance is still sufficient (don't recalculate amount)
+  const balance = isBuy ? await getUSDCBalance(smartAccountAddress as Address) : await getETHBalance(smartAccountAddress as Address);
+  if (balance < walletData.swapAmount) {
+    return {
+      success: false,
+      txHash: null,
+      error: `Insufficient balance for retry: ${formatUnits(balance, tokenDecimals)} ${tokenSymbol} < ${formatUnits(walletData.swapAmount, tokenDecimals)} needed`,
+      errorType: 'revert',
+      amountIn: '0',
+      amountOut: '0',
+      feeCollected: '0',
+      retryCount: 0,
+      lastError: 'Insufficient balance for retry',
+    };
+  }
+
+  // Dynamic slippage
+  const ethPriceUsd = _cachedEthPriceUsd ?? 2500;
+  const swapValueUsd = calculateSwapValueUsd(swapAmountAfterFee, isBuy, ethPriceUsd);
+  const slippageBps = getSlippageBpsForSwap(swapValueUsd);
+
+  // Get fresh quote with original amount
+  const swapQuote = await getSwapQuote(
+    smartAccountAddress as Address,
+    tokenIn,
+    tokenOut,
+    swapAmountAfterFee.toString(),
+    slippageBps
+  );
+
+  if (!swapQuote) {
+    return {
+      success: false,
+      txHash: null,
+      error: 'Failed to get swap quote on retry',
+      errorType: 'network',
+      amountIn: swapAmountAfterFee.toString(),
+      amountOut: '0',
+      feeCollected: '0',
+      retryCount: 1,
+      lastError: 'Quote fetch failed on retry',
+    };
+  }
+
+  // Execute via legacy EOA path (sequential, safer for retries)
+  const swapResult = await executeDelegatedSwap(
+    delegation,
+    decision.action as 'buy' | 'sell',
+    swapQuote.swap.to as Address,
+    swapQuote.swap.data as Hex,
+    BigInt(swapQuote.swap.value || '0')
+  );
+
+  if (!swapResult.txHash) {
+    return {
+      success: false,
+      txHash: null,
+      error: swapResult.retryInfo.lastError?.message ?? 'Retry swap execution failed',
+      errorType: swapResult.retryInfo.lastError?.type ?? 'unknown',
+      amountIn: swapAmountAfterFee.toString(),
+      amountOut: swapQuote.quote.quote.output.amount,
+      feeCollected: '0',
+      retryCount: swapResult.retryInfo.attempts,
+      lastError: swapResult.retryInfo.lastError?.message ?? null,
+    };
+  }
+
+  return {
+    success: true,
+    txHash: swapResult.txHash,
+    error: null,
+    errorType: null,
+    amountIn: swapAmountAfterFee.toString(),
+    amountOut: swapQuote.quote.quote.output.amount,
+    feeCollected: fee.toString(),
+    retryCount: swapResult.retryInfo.attempts,
+    lastError: null,
+  };
+}
+
 // Legacy function for compatibility (retries)
 async function processUserDCA(
   delegation: DelegationRecord,
@@ -3067,7 +3188,7 @@ async function runDCA() {
   let totalVolume = 0n;
   let totalFees = 0n;
   let successCount = 0;
-  const failedDelegations: { delegation: DelegationRecord; error: string }[] = [];
+  const failedDelegations: { delegation: DelegationRecord; error: string; originalWalletData?: WalletData }[] = [];
 
   const walletDataArray = Array.from(walletDataMap.values());
   for (let i = 0; i < results.length; i++) {
@@ -3088,12 +3209,13 @@ async function runDCA() {
         totalVolume += BigInt(result.amountIn);
         totalFees += BigInt(result.feeCollected);
       } else if (result.errorType && ['network', 'timeout', 'rate_limit', 'quote_expired'].includes(result.errorType)) {
-        failedDelegations.push({ delegation: walletData.delegation, error: result.error || 'Unknown error' });
+        failedDelegations.push({ delegation: walletData.delegation, error: result.error || 'Unknown error', originalWalletData: walletData });
       }
     }
   }
 
   // End-of-run retry for failed wallets (using legacy EOA method - sequential, safer)
+  // MAX 1 retry per wallet, use ORIGINAL amounts (don't recalculate)
   const MAX_RETRY_WALLETS = 20;
   if (failedDelegations.length > 0 && failedDelegations.length <= MAX_RETRY_WALLETS) {
     console.log(`\n========================================`);
@@ -3103,12 +3225,25 @@ async function runDCA() {
     console.log('Waiting 30s before retry...');
     await sleep(30000);
 
-    for (const { delegation, error } of failedDelegations) {
+    for (const { delegation, error, originalWalletData } of failedDelegations) {
       console.log(`\n[RETRY] ${delegation.smart_account_address} (previous error: ${error})`);
 
       try {
-        const result = await processUserDCA(delegation, decision, fg?.value ?? 50);
-        await logExecution(delegation.id, delegation.user_address, fg?.value ?? 50, decision, result);
+        let result: ExecutionResult;
+
+        if (originalWalletData) {
+          // Use original wallet data to avoid recalculating amounts (balance may have changed)
+          result = await retrySwapWithOriginalAmounts(originalWalletData, decision, fg?.value ?? 50);
+        } else {
+          // Fallback to legacy processUserDCA if no original data
+          result = await processUserDCA(delegation, decision, fg?.value ?? 50);
+        }
+
+        // Mark as retry in the DB log
+        result.retryCount = (result.retryCount || 0) + 1;
+        result.lastError = result.lastError || `Retry after: ${error}`;
+
+        await logExecution(delegation.id, delegation.user_address, fg?.value ?? 50, decision, result, true);
 
         if (result.success) {
           successCount++;
