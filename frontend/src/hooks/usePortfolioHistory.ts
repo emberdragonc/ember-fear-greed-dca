@@ -90,9 +90,12 @@ function calculatePortfolioHistory(
   }
 
   // Track cumulative balances
+  // ethBalance = total ETH accumulated from buys (minus any sold)
+  // totalUsdcSpent = total USDC spent buying ETH (cost basis)
+  // totalUsdcReceived = total USDC received from selling ETH
   let ethBalance = 0;
-  let usdcBalance = 0;
-  let totalDeposited = 0; // Track total USDC that went into the system
+  let totalUsdcSpent = 0;
+  let totalUsdcReceived = 0;
 
   const history: PortfolioDataPoint[] = [];
   const firstDepositDate = new Date(successfulSwaps[0].timestamp);
@@ -109,20 +112,16 @@ function calculatePortfolioHistory(
 
     if (isBuy) {
       // Buying ETH with USDC
-      usdcBalance -= amountIn;
       ethBalance += amountOut;
-      totalDeposited += amountIn; // Track how much USDC was put in
+      totalUsdcSpent += amountIn;
     } else {
       // Selling ETH for USDC
       ethBalance -= amountIn;
-      usdcBalance += amountOut;
+      totalUsdcReceived += amountOut;
     }
 
-    // Calculate portfolio value at this point in time
-    // We need historical ETH price, but we don't have it stored
-    // For now, we'll use current price for all historical points (approximation)
-    // In production, you'd want to fetch historical prices
-    const totalUsd = usdcBalance + ethBalance * currentEthPrice;
+    // Portfolio value = current ETH holdings at current price + any USDC received from sells
+    const totalUsd = ethBalance * currentEthPrice + totalUsdcReceived;
 
     history.push({
       date: exec.timestamp,
@@ -132,30 +131,28 @@ function calculatePortfolioHistory(
       }),
       total_usd: Math.max(0, totalUsd),
       eth_balance: ethBalance,
-      usdc_balance: usdcBalance,
+      usdc_balance: totalUsdcReceived,
       eth_price: currentEthPrice,
       action: exec.action,
     });
   }
 
-  // Current state
-  const currentEthBalance = ethBalance;
-  const currentUsdcBalance = usdcBalance;
-  const currentValue = currentUsdcBalance + currentEthBalance * currentEthPrice;
+  // Current portfolio value = ETH holdings at market price + any USDC from sells
+  const currentValue = ethBalance * currentEthPrice + totalUsdcReceived;
+  const totalDeposited = totalUsdcSpent; // Total cost basis
 
   // Calculate APY
   const now = new Date();
   const daysActive = Math.max(1, Math.floor((now.getTime() - firstDepositDate.getTime()) / (1000 * 60 * 60 * 24)));
   const yearsActive = daysActive / 365;
 
-  // Profit/loss calculation
+  // Profit/loss: current value of holdings vs what was spent
   const profitLoss = currentValue - totalDeposited;
   const profitLossPercent = totalDeposited > 0 ? (profitLoss / totalDeposited) * 100 : 0;
 
   // APY calculation: annualized return
-  // Formula: ((currentValue / totalDeposited) ^ (1 / years)) - 1
   let apy = 0;
-  if (totalDeposited > 0 && yearsActive > 0) {
+  if (totalDeposited > 0 && yearsActive > 0 && currentValue > 0) {
     const totalReturn = currentValue / totalDeposited;
     apy = (Math.pow(totalReturn, 1 / yearsActive) - 1) * 100;
   }
