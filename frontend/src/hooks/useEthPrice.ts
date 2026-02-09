@@ -31,14 +31,12 @@ export function useEthPrice() {
 
       try {
         setError(false);
-        const response = await fetch(
-          'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd',
-          { cache: 'no-store' }
-        );
+        // Use our own API endpoint (Uniswap-based, no CoinGecko)
+        const response = await fetch('/api/eth-price', { cache: 'no-store' });
         if (!response.ok) throw new Error('Failed to fetch price');
         
         const data = await response.json();
-        const newPrice = data.ethereum?.usd || FALLBACK_PRICE;
+        const newPrice = data.price || FALLBACK_PRICE;
         setPrice(newPrice);
         
         // Cache the price
@@ -51,7 +49,6 @@ export function useEthPrice() {
       } catch (err) {
         console.error('Error fetching ETH price:', err);
         setError(true);
-        // Keep using cached/fallback price
       } finally {
         setLoading(false);
       }

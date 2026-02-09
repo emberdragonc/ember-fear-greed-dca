@@ -1,30 +1,54 @@
 // Stats API - fetch protocol stats (wallets, TVL, executions, volume)
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { createPublicClient, http, formatUnits } from 'viem';
+import { createPublicClient, http, formatUnits, parseAbi } from 'viem';
 import { base } from 'viem/chains';
 
 const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const WETH = '0x4200000000000000000000000000000000000006';
+const UNISWAP_QUOTER_V2 = '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a';
 
 // Simple in-memory cache for TVL
 let tvlCache: { value: number; timestamp: number } | null = null;
 const TVL_CACHE_TTL = 30000; // 30 seconds
 
-// Fetch ETH price from CoinGecko
+// Cache ETH price
+let ethPriceCache: { price: number; timestamp: number } | null = null;
+const ETH_PRICE_CACHE_TTL = 60000;
+
+const quoterAbi = parseAbi([
+  'function quoteExactInputSingle((address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96)) external returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)',
+]);
+
+// Fetch ETH price from Uniswap (no CoinGecko)
 async function getEthPrice(): Promise<number> {
-  try {
-    const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd', {
-      next: { revalidate: 60 },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      return data.ethereum?.usd || 2000;
-    }
-  } catch (e) {
-    console.error('Failed to fetch ETH price:', e);
+  if (ethPriceCache && Date.now() - ethPriceCache.timestamp < ETH_PRICE_CACHE_TTL) {
+    return ethPriceCache.price;
   }
-  return 2000;
+  try {
+    const client = createPublicClient({
+      chain: base,
+      transport: http('https://mainnet.base.org', { timeout: 10_000 }),
+    });
+    const result = await client.simulateContract({
+      address: UNISWAP_QUOTER_V2,
+      abi: quoterAbi,
+      functionName: 'quoteExactInputSingle',
+      args: [{
+        tokenIn: WETH,
+        tokenOut: USDC,
+        amountIn: BigInt('1000000000000000000'),
+        fee: 500,
+        sqrtPriceLimitX96: BigInt(0),
+      }],
+    });
+    const price = Number(result.result[0]) / 1e6;
+    ethPriceCache = { price, timestamp: Date.now() };
+    return price;
+  } catch (e) {
+    console.error('Failed to fetch ETH price from Uniswap:', e);
+    return ethPriceCache?.price || 2000;
+  }
 }
 
 // ERC20 balanceOf
