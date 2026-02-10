@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useAccount } from 'wagmi';
 import { WalletConnect } from '@/components/WalletConnect';
 import { SmartAccountCard } from '@/components/SmartAccountCard';
@@ -30,12 +30,12 @@ export default function Home() {
   const hasDelegation = delegationState.status === 'signed';
   
   // Check localStorage for dismissed state
-  useState(() => {
+  useEffect(() => {
     if (typeof window !== 'undefined') {
       const dismissed = localStorage.getItem('fg-dca-how-it-works-dismissed');
       if (dismissed === 'true') setShowHowItWorks(false);
     }
-  });
+  }, []);
   
   const handleFundedChange = useCallback((funded: boolean) => {
     setIsFunded(funded);

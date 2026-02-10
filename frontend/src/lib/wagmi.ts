@@ -1,7 +1,6 @@
-// wagmi.ts - Wagmi configuration for Fear & Greed DCA
-import { createConfig, http, type CreateConnectorFn } from 'wagmi';
+// wagmi.ts - Wagmi configuration for Fear & Greed DCA using RainbowKit
+import { getDefaultConfig } from '@rainbow-me/rainbowkit';
 import { base, baseSepolia } from 'wagmi/chains';
-import { injected, metaMask, walletConnect } from 'wagmi/connectors';
 
 // Use Base Sepolia for testing, Base mainnet for production
 const chainId = parseInt(process.env.NEXT_PUBLIC_CHAIN_ID || '8453');
@@ -13,34 +12,11 @@ const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ||
                   process.env.NEXT_PUBLIC_WC_PROJECT_ID || 
                   '';
 
-// Create connectors array with proper typing
-const connectors: CreateConnectorFn[] = [
-  metaMask(),
-  injected(),
-];
-
-// Only add WalletConnect if projectId is configured
-if (projectId && projectId !== 'YOUR_PROJECT_ID') {
-  connectors.push(
-    walletConnect({
-      projectId,
-      metadata: {
-        name: 'Fear & Greed DCA',
-        description: 'Automated DCA based on Fear & Greed Index',
-        url: 'https://dca.ember.engineer',
-        icons: ['https://dca.ember.engineer/favicon.ico'],
-      },
-    }) as CreateConnectorFn
-  );
-}
-
-export const wagmiConfig = createConfig({
+export const wagmiConfig = getDefaultConfig({
+  appName: 'Fear & Greed DCA',
+  projectId: projectId || 'YOUR_PROJECT_ID',
   chains: [base, baseSepolia],
-  connectors,
-  transports: {
-    [base.id]: http(),
-    [baseSepolia.id]: http(),
-  },
+  ssr: true,
 });
 
 // USDC and WETH addresses for the target chain
