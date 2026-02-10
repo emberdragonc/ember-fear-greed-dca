@@ -1,5 +1,5 @@
 // wagmi.ts - Wagmi configuration for Fear & Greed DCA
-import { createConfig, http } from 'wagmi';
+import { createConfig, http, type CreateConnectorFn } from 'wagmi';
 import { base, baseSepolia } from 'wagmi/chains';
 import { injected, metaMask, walletConnect } from 'wagmi/connectors';
 
@@ -13,8 +13,8 @@ const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ||
                   process.env.NEXT_PUBLIC_WC_PROJECT_ID || 
                   '';
 
-// Create connectors array
-const connectors = [
+// Create connectors array with proper typing
+const connectors: CreateConnectorFn[] = [
   metaMask(),
   injected(),
 ];
@@ -30,7 +30,7 @@ if (projectId && projectId !== 'YOUR_PROJECT_ID') {
         url: 'https://dca.ember.engineer',
         icons: ['https://dca.ember.engineer/favicon.ico'],
       },
-    })
+    }) as CreateConnectorFn
   );
 }
 
