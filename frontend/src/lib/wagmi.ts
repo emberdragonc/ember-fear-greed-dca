@@ -8,14 +8,16 @@ export const targetChain = chainId === 8453 ? base : baseSepolia;
 
 // WalletConnect Project ID - REQUIRED for WalletConnect to work
 // Get one at: https://cloud.walletconnect.com
-const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || 
-                  process.env.NEXT_PUBLIC_WC_PROJECT_ID || 
-                  '';
+const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
+
+if (!projectId) {
+  console.warn('NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID is not set. WalletConnect will not work properly.');
+}
 
 export const wagmiConfig = getDefaultConfig({
   appName: 'Fear & Greed DCA',
-  projectId: projectId || 'YOUR_PROJECT_ID',
-  chains: [base, baseSepolia],
+  projectId: projectId || '',
+  chains: [targetChain],
   ssr: true,
 });
 
