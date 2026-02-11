@@ -344,6 +344,7 @@ export function DelegationSetup({ isFunded = false }: DelegationSetupProps) {
             className="w-full px-3 py-2.5 bg-black/30 border border-white/10 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-white"
           >
             <option value="ETH">ETH (Ethereum)</option>
+            <option value="cbBTC">cbBTC (Coinbase Wrapped BTC)</option>
           </select>
         </div>
       </div>

@@ -124,7 +124,8 @@ export function useDelegation(): UseDelegationReturn {
   const saveDelegationToDb = async (
     delegation: StoredDelegation, 
     signedDelegation: any,
-    smartAccountAddr?: string
+    smartAccountAddr?: string,
+    targetAsset?: string
   ) => {
     try {
       const response = await fetch('/api/delegation', {
@@ -143,6 +144,7 @@ export function useDelegation(): UseDelegationReturn {
           },
           maxAmountPerSwap: DELEGATION_CONFIG.MAX_SWAP_AMOUNT_USDC.toString(),
           expiresAt: delegation.expiresAt,
+          targetAsset: targetAsset || 'ETH',
         }),
       });
 
@@ -207,6 +209,7 @@ export function useDelegation(): UseDelegationReturn {
         DELEGATION_ADDRESSES.PERMIT2,         // Permit2 (Universal Router uses this)
         DELEGATION_ADDRESSES.USDC,            // For approve()
         DELEGATION_ADDRESSES.WETH,            // For approve()
+        DELEGATION_ADDRESSES.cbBTC,           // For approve()
       ];
 
       // Create delegation using MetaMask Delegation Framework
@@ -288,6 +291,7 @@ export function useDelegation(): UseDelegationReturn {
             DELEGATION_ADDRESSES.PERMIT2,
             DELEGATION_ADDRESSES.USDC,
             DELEGATION_ADDRESSES.WETH,
+            DELEGATION_ADDRESSES.cbBTC,
           ],
           allowedMethods: [
             'execute(bytes,bytes[],uint256)',
@@ -297,7 +301,7 @@ export function useDelegation(): UseDelegationReturn {
             'approve(address,address,uint160,uint48)',
             'transfer(address,uint256)',
           ],
-          maxCalls: 4 + (DELEGATION_CONFIG.MAX_CALLS_PER_DAY * DELEGATION_CONFIG.VALIDITY_DAYS),
+          maxCalls: 6 + (DELEGATION_CONFIG.MAX_CALLS_PER_DAY * DELEGATION_CONFIG.VALIDITY_DAYS),
           expiry: BigInt(expiryTimestamp),
         },
       };
@@ -306,7 +310,7 @@ export function useDelegation(): UseDelegationReturn {
       saveDelegation(delegationData);
       
       // Save to Supabase for backend access (include signed delegation for redemption)
-      await saveDelegationToDb(delegationData, signedDelegation, smartAccountAddr);
+      await saveDelegationToDb(delegationData, signedDelegation, smartAccountAddr, targetAsset);
 
       setState({
         status: 'signed',

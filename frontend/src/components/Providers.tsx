@@ -4,9 +4,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WagmiProvider } from 'wagmi';
 import { RainbowKitProvider, darkTheme } from '@rainbow-me/rainbowkit';
-import '@rainbow-me/rainbowkit/styles.css';
 import { wagmiConfig } from '@/lib/wagmi';
 import { SmartAccountProvider } from '@/contexts/SmartAccountContext';
+import { InAppBrowserWarning } from '@/components/InAppBrowserWarning';
 import { ReactNode, useState } from 'react';
 
 export function Providers({ children }: { children: ReactNode }) {
@@ -35,6 +35,7 @@ export function Providers({ children }: { children: ReactNode }) {
           })}
         >
           <SmartAccountProvider>
+            <InAppBrowserWarning />
             {children}
           </SmartAccountProvider>
         </RainbowKitProvider>

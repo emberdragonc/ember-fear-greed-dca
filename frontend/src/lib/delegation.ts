@@ -14,6 +14,8 @@ export const DELEGATION_ADDRESSES = {
   USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as Address,
   // WETH on Base
   WETH: '0x4200000000000000000000000000000000000006' as Address,
+  // cbBTC on Base (Coinbase Wrapped BTC)
+  cbBTC: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf' as Address,
   // Delegation Manager
   DELEGATION_MANAGER: '0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3' as Address,
   // EntryPoint v0.7

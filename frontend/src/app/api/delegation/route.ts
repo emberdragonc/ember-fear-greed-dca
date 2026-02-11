@@ -58,7 +58,8 @@ export async function POST(request: NextRequest) {
       signature, 
       delegationData,
       maxAmountPerSwap,
-      expiresAt 
+      expiresAt,
+      targetAsset
     } = body;
 
     // Validate inputs
@@ -80,6 +81,7 @@ export async function POST(request: NextRequest) {
         delegation_data: delegationData,
         max_amount_per_swap: maxAmountPerSwap || '1000000000', // Default 1000 USDC
         expires_at: expiresAt,
+        target_asset: targetAsset || 'ETH', // Store target asset preference
       }, {
         onConflict: 'user_address',
       });
