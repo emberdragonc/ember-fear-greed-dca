@@ -61,6 +61,16 @@ export async function getUSDCBalance(address: Address): Promise<bigint> {
   return balance;
 }
 
+export async function getCBBTCBalance(address: Address): Promise<bigint> {
+  const balance = await publicClient.readContract({
+    address: ADDRESSES.cbBTC,
+    abi: erc20Abi,
+    functionName: 'balanceOf',
+    args: [address],
+  });
+  return balance;
+}
+
 // ============ ALLOWANCE CHECKING ============
 
 import { permit2Abi } from './config';

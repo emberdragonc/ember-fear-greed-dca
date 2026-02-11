@@ -43,8 +43,43 @@ import {
   type ErrorType,
 } from './config';
 import { classifyError, type ClassifiedError, withRetry, decodeErrorSelector } from './error-handler';
-import { publicClient, walletClient, bundlerClient, pimlicoPaymasterClient, getETHBalance, getUSDCBalance } from './clients';
+import { publicClient, walletClient, bundlerClient, pimlicoPaymasterClient, getETHBalance, getUSDCBalance, getCBBTCBalance } from './clients';
 import { initBackendSmartAccount } from './smart-account';
+
+// ============ TARGET TOKEN HELPERS ============
+
+/**
+ * Get the target token address based on user's preference
+ * cbBTC uses 8 decimals (not 18 like WETH/ETH)
+ */
+export function getTargetTokenAddress(targetAsset?: string): Address {
+  if (targetAsset?.toLowerCase() === 'cbbtc') {
+    return ADDRESSES.cbBTC;
+  }
+  // Default to WETH for backward compatibility
+  return ADDRESSES.WETH;
+}
+
+/**
+ * Get token decimals for the target asset
+ * cbBTC uses 8 decimals, everything else uses 18
+ */
+export function getTargetTokenDecimals(targetAsset?: string): number {
+  if (targetAsset?.toLowerCase() === 'cbbtc') {
+    return 8;
+  }
+  return 18;
+}
+
+/**
+ * Get the token symbol for display
+ */
+export function getTargetTokenSymbol(targetAsset?: string): string {
+  if (targetAsset?.toLowerCase() === 'cbbtc') {
+    return 'cbBTC';
+  }
+  return 'ETH';
+}
 
 // ============ ETH PRICE CACHE ============
 
@@ -223,8 +258,11 @@ export async function runDryRunSimulation(
       continue;
     }
     
-    const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH;
-    const tokenOut = isBuy ? ADDRESSES.WETH : ADDRESSES.USDC;
+    // Get target token based on user's preference (cbBTC or WETH)
+    const targetToken = getTargetTokenAddress(delegation.target_asset);
+    const targetSymbol = getTargetTokenSymbol(delegation.target_asset);
+    const tokenIn = isBuy ? ADDRESSES.USDC : targetToken;
+    const tokenOut = isBuy ? targetToken : ADDRESSES.USDC;
     
     const simulation = await simulateSwap(userSmartAccount, tokenIn, amountToSwap, tokenOut);
     
@@ -688,46 +726,102 @@ export async function waitForBatchedUserOpReceipts(
 
 // ============ PHASE 2: PARALLEL SWAPS ============
 
+export interface PrepareSwapError {
+  stage: 'quote_fetch' | 'quote_validation';
+  reason: string;
+  apiError?: string;
+  tokenPair: string;
+  walletAddress: string;
+}
+
 async function prepareSwap(
   walletData: WalletData,
   decision: DCADecision,
   nonceKey: bigint,
   ethPriceUsd: number
 ): Promise<PreparedSwap | null> {
-  const { smartAccountAddress, swapAmountAfterFee } = walletData;
+  const { smartAccountAddress, swapAmountAfterFee, delegation } = walletData;
 
   const isBuy = decision.action === 'buy';
-  const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH;
-  const tokenOut = isBuy ? ADDRESSES.WETH : ADDRESSES.USDC;
+  // Get target token based on user's preference (cbBTC or WETH)
+  const targetToken = getTargetTokenAddress(delegation.target_asset);
+  const targetDecimals = getTargetTokenDecimals(delegation.target_asset);
+  const targetSymbol = getTargetTokenSymbol(delegation.target_asset);
+  const tokenIn = isBuy ? ADDRESSES.USDC : targetToken;
+  const tokenOut = isBuy ? targetToken : ADDRESSES.USDC;
+  const tokenPair = `${isBuy ? 'USDC' : targetSymbol}→${isBuy ? targetSymbol : 'USDC'}`;
 
   const swapValueUsd = calculateSwapValueUsd(swapAmountAfterFee, isBuy, ethPriceUsd);
   const slippageBps = getSlippageBpsForSwap(swapValueUsd);
 
   console.log(`[Prepare] ${smartAccountAddress}: Swap value $${swapValueUsd.toFixed(2)} -> slippage ${slippageBps/100}%`);
 
-  const swapQuote = await getSwapQuote(
-    smartAccountAddress,
-    tokenIn,
-    tokenOut,
-    swapAmountAfterFee.toString(),
-    slippageBps
-  );
-
-  if (!swapQuote) {
-    console.error(`[Prepare] Failed to get quote for ${smartAccountAddress}`);
+  let swapQuote;
+  try {
+    swapQuote = await getSwapQuote(
+      smartAccountAddress,
+      tokenIn,
+      tokenOut,
+      swapAmountAfterFee.toString(),
+      slippageBps
+    );
+  } catch (error: any) {
+    const errorInfo: PrepareSwapError = {
+      stage: 'quote_fetch',
+      reason: `Quote API threw exception: ${error?.message || 'Unknown error'}`,
+      apiError: error?.message || 'Unknown error',
+      tokenPair,
+      walletAddress: smartAccountAddress,
+    };
+    console.error(`[Prepare] ❌ ${smartAccountAddress}: Quote fetch failed - ${errorInfo.reason}`);
+    // Attach error info to walletData for downstream logging
+    (walletData as any).__prepareError = errorInfo;
     return null;
   }
 
+  if (!swapQuote) {
+    const errorInfo: PrepareSwapError = {
+      stage: 'quote_fetch',
+      reason: 'Quote API returned null after retries',
+      tokenPair,
+      walletAddress: smartAccountAddress,
+    };
+    console.error(`[Prepare] ❌ ${smartAccountAddress}: ${errorInfo.reason}`);
+    (walletData as any).__prepareError = errorInfo;
+    return null;
+  }
+
+  // Validate quote has required fields
   const expectedOutput = BigInt(swapQuote.quote.quote?.output?.amount || '0');
+  if (expectedOutput === 0n) {
+    const errorInfo: PrepareSwapError = {
+      stage: 'quote_validation',
+      reason: 'Quote returned zero output amount',
+      tokenPair,
+      walletAddress: smartAccountAddress,
+    };
+    console.error(`[Prepare] ❌ ${smartAccountAddress}: ${errorInfo.reason}`);
+    (walletData as any).__prepareError = errorInfo;
+    return null;
+  }
+
   const minAmountOut = calculateMinAmountOut(expectedOutput, slippageBps);
 
-  console.log(`[Prepare] ${smartAccountAddress}: Expected output ${formatUnits(expectedOutput, isBuy ? 18 : 6)}, Min with slippage ${formatUnits(minAmountOut, isBuy ? 18 : 6)}`);
+  console.log(`[Prepare] ${smartAccountAddress}: Expected output ${formatUnits(expectedOutput, isBuy ? targetDecimals : 6)}, Min with slippage ${formatUnits(minAmountOut, isBuy ? targetDecimals : 6)}`);
 
   return {
     walletData,
     swapQuote,
     nonceKey,
   };
+}
+
+export interface BuildUserOpError {
+  stage: 'delegation_parse' | 'execution_create' | 'calldata_encode' | 'userop_prepare';
+  reason: string;
+  originalError?: string;
+  tokenPair: string;
+  walletAddress: string;
 }
 
 async function buildUserOpForSwap(
@@ -738,13 +832,28 @@ async function buildUserOpForSwap(
   const { walletData, swapQuote, nonceKey } = preparedSwap;
   const { delegation, smartAccountAddress, swapAmountAfterFee, fee } = walletData;
 
+  const isBuy = decision.action === 'buy';
+  const targetToken = getTargetTokenAddress(delegation.target_asset);
+  const targetSymbol = getTargetTokenSymbol(delegation.target_asset);
+  const tokenIn = isBuy ? ADDRESSES.USDC : targetToken;
+  const tokenOut = isBuy ? targetToken : ADDRESSES.USDC;
+  const tokenPair = `${isBuy ? 'USDC' : targetSymbol}→${isBuy ? targetSymbol : 'USDC'}`;
+
   try {
     const signedDelegation = typeof delegation.delegation_data === 'string'
       ? JSON.parse(delegation.delegation_data)
       : delegation.delegation_data;
 
     if (!signedDelegation.signature) {
-      throw new Error('Delegation missing signature');
+      const errorInfo: BuildUserOpError = {
+        stage: 'delegation_parse',
+        reason: 'Delegation missing signature',
+        tokenPair,
+        walletAddress: smartAccountAddress,
+      };
+      console.error(`[BuildUserOp] ❌ ${smartAccountAddress}: ${errorInfo.reason}`);
+      (walletData as any).__buildError = errorInfo;
+      return null;
     }
 
     const execution = createExecution({
@@ -781,7 +890,26 @@ async function buildUserOpForSwap(
       userOp,
     };
   } catch (error: any) {
-    console.error(`[BuildUserOp] Failed for ${smartAccountAddress}: ${error?.message}`);
+    const errorMsg = error?.message || 'Unknown error';
+    let stage: BuildUserOpError['stage'] = 'userop_prepare';
+    
+    if (errorMsg.includes('delegation') || errorMsg.includes('signature')) {
+      stage = 'delegation_parse';
+    } else if (errorMsg.includes('execution') || errorMsg.includes('target')) {
+      stage = 'execution_create';
+    } else if (errorMsg.includes('calldata') || errorMsg.includes('encode')) {
+      stage = 'calldata_encode';
+    }
+
+    const errorInfo: BuildUserOpError = {
+      stage,
+      reason: `UserOp build failed at ${stage}: ${errorMsg}`,
+      originalError: errorMsg,
+      tokenPair,
+      walletAddress: smartAccountAddress,
+    };
+    console.error(`[BuildUserOp] ❌ ${smartAccountAddress}: ${errorInfo.reason}`);
+    (walletData as any).__buildError = errorInfo;
     return null;
   }
 }
@@ -795,10 +923,14 @@ async function executeSwapWithUserOp(
   const { delegation, smartAccountAddress, swapAmountAfterFee, fee } = walletData;
 
   const isBuy = decision.action === 'buy';
-  const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH;
-  const tokenOut = isBuy ? ADDRESSES.WETH : ADDRESSES.USDC;
-  const tokenDecimals = isBuy ? 6 : 18;
-  const tokenSymbol = isBuy ? 'USDC' : 'ETH';
+  // Get target token based on user's preference (cbBTC or WETH)
+  const targetToken = getTargetTokenAddress(delegation.target_asset);
+  const targetDecimals = getTargetTokenDecimals(delegation.target_asset);
+  const targetSymbol = getTargetTokenSymbol(delegation.target_asset);
+  const tokenIn = isBuy ? ADDRESSES.USDC : targetToken;
+  const tokenOut = isBuy ? targetToken : ADDRESSES.USDC;
+  const tokenDecimals = isBuy ? 6 : targetDecimals;
+  const tokenSymbol = isBuy ? 'USDC' : targetSymbol;
 
   const price = ethPriceUsd ?? _cachedEthPriceUsd ?? 2500;
   const swapValueUsd = calculateSwapValueUsd(swapAmountAfterFee, isBuy, price);
@@ -857,7 +989,7 @@ async function executeSwapWithUserOp(
     };
   }
 
-  console.log(`[Swap] ✅ ${smartAccountAddress}: ${formatUnits(swapAmountAfterFee, tokenDecimals)} ${tokenSymbol} -> ${formatUnits(BigInt(swapQuote.quote.quote.output.amount), isBuy ? 18 : 6)} ${isBuy ? 'ETH' : 'USDC'}`);
+  console.log(`[Swap] ✅ ${smartAccountAddress}: ${formatUnits(swapAmountAfterFee, tokenDecimals)} ${tokenSymbol} -> ${formatUnits(BigInt(swapQuote.quote.quote.output.amount), isBuy ? targetDecimals : 6)} ${isBuy ? targetSymbol : 'USDC'}`);
 
   return {
     success: true,
@@ -982,17 +1114,23 @@ export async function processSwapsParallel(
 
     if (validPreparedSwaps.length === 0) {
       for (const walletData of batch) {
+        const prepareError = (walletData as any).__prepareError as PrepareSwapError | undefined;
+        const errorDetail = prepareError 
+          ? `[${prepareError.stage}] ${prepareError.reason} | Pair: ${prepareError.tokenPair}`
+          : 'Failed to get swap quote (all quotes failed)';
+        
         allResults.push({
           success: false,
           txHash: null,
-          error: 'Failed to get swap quote',
+          error: errorDetail,
           errorType: 'network',
           amountIn: walletData.swapAmountAfterFee.toString(),
           amountOut: '0',
           feeCollected: '0',
           retryCount: 1,
-          lastError: 'Quote fetch failed',
+          lastError: errorDetail,
           walletAddress: walletData.smartAccountAddress,
+          errorDetail,
         });
       }
       if (!isLastBatch) await sleep(BATCH_DELAY_MS);
@@ -1012,17 +1150,23 @@ export async function processSwapsParallel(
 
     if (validBatchItems.length === 0) {
       for (const preparedSwap of validPreparedSwaps) {
+        const buildError = (preparedSwap.walletData as any).__buildError as BuildUserOpError | undefined;
+        const errorDetail = buildError
+          ? `[${buildError.stage}] ${buildError.reason} | Pair: ${buildError.tokenPair}`
+          : 'Failed to build UserOperation (all builds failed)';
+        
         allResults.push({
           success: false,
           txHash: null,
-          error: 'Failed to build UserOperation',
+          error: errorDetail,
           errorType: 'unknown',
           amountIn: preparedSwap.walletData.swapAmountAfterFee.toString(),
           amountOut: '0',
           feeCollected: '0',
           retryCount: 0,
-          lastError: 'UserOp build failed',
+          lastError: errorDetail,
           walletAddress: preparedSwap.walletData.smartAccountAddress,
+          errorDetail,
         });
       }
       if (!isLastBatch) await sleep(BATCH_DELAY_MS);
@@ -1038,19 +1182,21 @@ export async function processSwapsParallel(
       const now = Date.now();
       const quoteAge = now - batchItem.swapQuote.timestamp;
       if (quoteAge > QUOTE_VALIDITY_MS) {
-        console.warn(`[Phase 2] ⚠️ ${batchItem.walletData.smartAccountAddress}: Quote expired before send (${quoteAge}ms old, max ${QUOTE_VALIDITY_MS}ms) - skipping`);
+        const errorMsg = `Quote expired before send: ${quoteAge}ms old (max ${QUOTE_VALIDITY_MS}ms)`;
+        console.warn(`[Phase 2] ⚠️ ${batchItem.walletData.smartAccountAddress}: ${errorMsg} - skipping`);
         processedWallets.add(batchItem.walletData.smartAccountAddress);
         batchExecutionResults.push({
           success: false,
           txHash: null,
-          error: `Quote expired before send: ${quoteAge}ms old`,
+          error: errorMsg,
           errorType: 'quote_expired',
           amountIn: batchItem.walletData.swapAmountAfterFee.toString(),
           amountOut: '0',
           feeCollected: '0',
           retryCount: 0,
-          lastError: `Quote expired before send: ${quoteAge}ms old`,
+          lastError: errorMsg,
           walletAddress: batchItem.walletData.smartAccountAddress,
+          errorDetail: `[quote_expired] ${errorMsg}`,
         });
       } else {
         freshBatchItems.push(batchItem);
@@ -1106,17 +1252,38 @@ export async function processSwapsParallel(
     // Add results for wallets that failed at quote/build stage
     for (const walletData of batch) {
       if (!processedWallets.has(walletData.smartAccountAddress)) {
+        // Extract detailed error info if available
+        const prepareError = (walletData as any).__prepareError as PrepareSwapError | undefined;
+        const buildError = (walletData as any).__buildError as BuildUserOpError | undefined;
+        
+        let errorDetail: string;
+        let errorType: 'network' | 'quote_expired' | 'unknown' = 'network';
+        
+        if (prepareError) {
+          errorDetail = `[${prepareError.stage}] ${prepareError.reason} | Pair: ${prepareError.tokenPair}`;
+          errorType = prepareError.stage === 'quote_fetch' ? 'network' : 'unknown';
+          console.error(`[Phase 2] ❌ ${walletData.smartAccountAddress}: Quote stage failed - ${prepareError.reason} (${prepareError.tokenPair})`);
+        } else if (buildError) {
+          errorDetail = `[${buildError.stage}] ${buildError.reason} | Pair: ${buildError.tokenPair}`;
+          errorType = 'unknown';
+          console.error(`[Phase 2] ❌ ${walletData.smartAccountAddress}: UserOp build failed - ${buildError.reason} (${buildError.tokenPair})`);
+        } else {
+          errorDetail = 'Quote or UserOp build failed (unknown reason)';
+          console.error(`[Phase 2] ❌ ${walletData.smartAccountAddress}: Failed at quote/build stage (no error details captured)`);
+        }
+        
         batchExecutionResults.push({
           success: false,
           txHash: null,
-          error: 'Quote or UserOp build failed',
-          errorType: 'network',
+          error: errorDetail,
+          errorType,
           amountIn: walletData.swapAmountAfterFee.toString(),
           amountOut: '0',
           feeCollected: '0',
           retryCount: 1,
-          lastError: 'Quote or UserOp build failed',
+          lastError: errorDetail,
           walletAddress: walletData.smartAccountAddress,
+          errorDetail, // Include granular error for daily reports
         });
       }
     }
@@ -1145,14 +1312,28 @@ export async function retrySwapWithOriginalAmounts(
 ): Promise<ExecutionResult> {
   const { delegation, smartAccountAddress, swapAmountAfterFee, fee } = walletData;
   const isBuy = decision.action === 'buy';
-  const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH;
-  const tokenOut = isBuy ? ADDRESSES.WETH : ADDRESSES.USDC;
-  const tokenDecimals = isBuy ? 6 : 18;
-  const tokenSymbol = isBuy ? 'USDC' : 'ETH';
+  // Get target token based on user's preference (cbBTC or WETH)
+  const targetToken = getTargetTokenAddress(delegation.target_asset);
+  const targetDecimals = getTargetTokenDecimals(delegation.target_asset);
+  const targetSymbol = getTargetTokenSymbol(delegation.target_asset);
+  const tokenIn = isBuy ? ADDRESSES.USDC : targetToken;
+  const tokenOut = isBuy ? targetToken : ADDRESSES.USDC;
+  const tokenDecimals = isBuy ? 6 : targetDecimals;
+  const tokenSymbol = isBuy ? 'USDC' : targetSymbol;
 
   console.log(`[RETRY] Using original amount: ${formatUnits(swapAmountAfterFee, tokenDecimals)} ${tokenSymbol}`);
 
-  const balance = isBuy ? await getUSDCBalance(smartAccountAddress as Address) : await getETHBalance(smartAccountAddress as Address);
+  // Get balance based on the operation type and target token
+  let balance: bigint;
+  if (isBuy) {
+    balance = await getUSDCBalance(smartAccountAddress as Address);
+  } else {
+    // For sell operations, check the target token balance (WETH or cbBTC)
+    balance = delegation.target_asset?.toLowerCase() === 'cbbtc'
+      ? await getCBBTCBalance(smartAccountAddress as Address)
+      : await getETHBalance(smartAccountAddress as Address);
+  }
+  
   if (balance < walletData.swapAmount) {
     return {
       success: false,

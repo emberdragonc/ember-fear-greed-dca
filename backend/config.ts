@@ -14,13 +14,14 @@ export const PIMLICO_API_KEY = process.env.PIMLICO_API_KEY;
 export const PIMLICO_BUNDLER_URL = `https://api.pimlico.io/v2/base/rpc?apikey=${PIMLICO_API_KEY}`;
 
 // Pimlico paymaster for gas sponsorship (fixes AA21 didn't pay prefund)
-export const PIMLICO_PAYMASTER_URL = `https://api.pimlico.io/v2/8453/rpc?apikey=pim_UQJHzByj343893oNtPGJfq`;
+export const PIMLICO_PAYMASTER_URL = `https://api.pimlico.io/v2/8453/rpc?apikey=${PIMLICO_API_KEY}`;
 
 export const ADDRESSES = {
   // Tokens
   ETH: '0x0000000000000000000000000000000000000000' as Address,
   WETH: '0x4200000000000000000000000000000000000006' as Address,
   USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as Address,
+  cbBTC: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf' as Address,
   // Uniswap V4 Universal Router (used by Trading API)
   UNISWAP_ROUTER: '0x6fF5693b99212Da76ad316178A184AB56D299b43' as Address,
   // Permit2 - Universal Router uses this for token transfers
@@ -92,6 +93,7 @@ export interface DelegationRecord {
   max_amount_per_swap: string;
   expires_at: string;
   created_at: string;
+  target_asset?: string; // 'ETH' or 'cbBTC' - the DCA target token
 }
 
 export interface ExecutionResult {
@@ -105,6 +107,7 @@ export interface ExecutionResult {
   retryCount: number;
   lastError: string | null;
   walletAddress?: string; // Smart account address for explicit result-to-wallet mapping
+  errorDetail?: string | null; // Granular error reason for daily reports (e.g., "[quote_fetch] Quote API returned null after retries | Pair: USDC→ETH")
 }
 
 export interface SimulationResult {

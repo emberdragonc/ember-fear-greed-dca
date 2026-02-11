@@ -25,8 +25,10 @@ export async function logExecution(
         status: result.success ? 'success' : (isRetry ? 'retry_failed' : 'failed'),
         error_message: isRetry ? `[RETRY] ${result.error || ''}` : result.error,
         error_type: result.errorType,
+        error_detail: result.errorDetail || result.error, // Store granular error reason for reporting
         retry_count: result.retryCount,
         last_error: result.lastError,
+        wallet_address: result.walletAddress,
         created_at: new Date().toISOString(),
       });
       
