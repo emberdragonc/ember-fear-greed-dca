@@ -85,13 +85,13 @@ export function SmartAccountProvider({ children }: { children: ReactNode }) {
 
     try {
       // Create smart account with Hybrid implementation (EOA + passkey support)
-      // Use walletClient as signer (not walletClient.account) for proper signMessage support
+      // Use signatory with account (per Pimlico integration docs)
       const smartAccount = await toMetaMaskSmartAccount({
         client: publicClient as any,
         implementation: Implementation.Hybrid,
         deployParams: [eoaAddress, [], [], []],
         deploySalt: '0x',
-        signer: { walletClient },
+        signatory: { account: walletClient.account },
       });
 
       // Check if account is deployed by checking code
@@ -138,7 +138,7 @@ export function SmartAccountProvider({ children }: { children: ReactNode }) {
         implementation: Implementation.Hybrid,
         deployParams: [eoaAddress, [], [], []],
         deploySalt: '0x',
-        signer: { walletClient },
+        signatory: { account: walletClient.account },
       });
 
       // Verify it matches the stored address
