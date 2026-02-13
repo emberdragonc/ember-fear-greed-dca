@@ -165,11 +165,16 @@ export function BalanceDisplay() {
       let txParams: { to: `0x${string}`; value: bigint; data: `0x${string}` };
       
       if (withdrawToken === 'ETH') {
-        // ETH: Send value to EOA
-        txParams = {
-          to: eoaAddress as `0x${string}`,
-          value: parseEther(withdrawAmount),
-          data: '0x' as `0x${string}`,
+        // ETH: Transfer WETH to EOA (DCA buys WETH, not native ETH)
+        const transferData = encodeFunctionData({
+  abi: erc20Abi,
+  functionName: 'transfer',
+  args: [eoaAddress as `0x${string}`, parseEther(withdrawAmount)],
+  });
+  txParams = {
+          to: WETH_ADDRESS as `0x${string}`,
+          value: 0n,
+          data: transferData,
         };
       } else {
         // USDC: Call transfer on USDC contract
@@ -178,7 +183,12 @@ export function BalanceDisplay() {
           functionName: 'transfer',
           args: [eoaAddress as `0x${string}`, parseUnits(withdrawAmount, 6)],
         });
-        txParams = {
+        const transferData = encodeFunctionData({
+  abi: erc20Abi,
+  functionName: 'transfer',
+  args: [eoaAddress as `0x${string}`, parseEther(withdrawAmount)],
+  });
+  txParams = {
           to: TOKENS.USDC as `0x${string}`,
           value: 0n,
           data: transferData,
