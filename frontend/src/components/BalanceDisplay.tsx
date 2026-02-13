@@ -159,10 +159,9 @@ export function BalanceDisplay() {
         chain: base,
         bundlerTransport: http(BUNDLER_URL),
         paymaster: pimlicoClient,
-        userOperation: {
-          estimateFeesPerGas: async () => {
-            return (await pimlicoClient.getUserOperationGasPrice()).fast;
-          },
+  paymasterContext: {
+  sponsorshipPolicyId: 'sp_glamorous_leopardon',
+  },
         },
       });
 
