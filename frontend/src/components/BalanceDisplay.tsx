@@ -141,10 +141,10 @@ export function BalanceDisplay() {
   alert('Your smart account needs a small amount of ETH for gas fees. Please deposit at least 0.0001 ETH to your smart account first.');
   setIsWithdrawing(false);
   // Check sufficient balance for the token
-  const withdrawAmountBigInt = withdrawToken === 'ETH' ? parseEther(withdrawAmount) : parseUnits(withdrawAmount, 6);
-  const currentBalance = withdrawToken === 'ETH' ? (wethBalanceRaw as bigint) : (usdcBalanceRaw as bigint);
+  const withdrawAmountBigInt = withdrawToken === 'WETH' ? parseEther(withdrawAmount) : parseUnits(withdrawAmount, 6);
+  const currentBalance = withdrawToken === 'WETH' ? (wethBalanceRaw as bigint) : (usdcBalanceRaw as bigint);
   if (withdrawAmountBigInt > currentBalance) {
-  alert(`Insufficient ${withdrawToken} balance in smart account.`);
+  alert(`Insufficient ${withdrawToken === 'WETH' ? 'WETH' : withdrawToken} balance in smart account.`);
   setIsWithdrawing(false);
   return;
   }
@@ -177,7 +177,7 @@ export function BalanceDisplay() {
       // Build the withdrawal transaction
       let txParams: { to: `0x${string}`; value: bigint; data: `0x${string}` };
       
-      if (withdrawToken === 'ETH') {
+      if (withdrawToken === 'WETH') {
         // ETH: Transfer WETH to EOA (DCA buys WETH, not native ETH)
         const transferData = encodeFunctionData({
   abi: erc20Abi,
@@ -241,10 +241,10 @@ export function BalanceDisplay() {
     } finally {
       setIsWithdrawing(false);
   // Check sufficient balance for the token
-  const withdrawAmountBigInt = withdrawToken === 'ETH' ? parseEther(withdrawAmount) : parseUnits(withdrawAmount, 6);
-  const currentBalance = withdrawToken === 'ETH' ? (wethBalanceRaw as bigint) : (usdcBalanceRaw as bigint);
+  const withdrawAmountBigInt = withdrawToken === 'WETH' ? parseEther(withdrawAmount) : parseUnits(withdrawAmount, 6);
+  const currentBalance = withdrawToken === 'WETH' ? (wethBalanceRaw as bigint) : (usdcBalanceRaw as bigint);
   if (withdrawAmountBigInt > currentBalance) {
-  alert(`Insufficient ${withdrawToken} balance in smart account.`);
+  alert(`Insufficient ${withdrawToken === 'WETH' ? 'WETH' : withdrawToken} balance in smart account.`);
   setIsWithdrawing(false);
   return;
   }
@@ -328,7 +328,7 @@ export function BalanceDisplay() {
             </select>
             <input
               type="number"
-              placeholder={withdrawToken === 'USDC' ? usdcFormatted : ethFormatted}
+              placeholder={withdrawToken === 'USDC' ? usdcFormatted : wethFormatted}
               value={withdrawAmount}
               onChange={(e) => setWithdrawAmount(e.target.value)}
               className="flex-1 px-3 py-2 bg-black/30 border border-white/10 rounded-lg text-white text-sm"
@@ -336,7 +336,7 @@ export function BalanceDisplay() {
           </div>
           <div className="flex gap-2 mb-2">
             <button
-              onClick={() => setWithdrawAmount(withdrawToken === 'USDC' ? usdcRaw : ethRaw)}
+              onClick={() => setWithdrawAmount(withdrawToken === 'USDC' ? usdcRaw : wethRaw)}
               className="text-xs text-orange-400 hover:text-orange-300"
             >
               Max
