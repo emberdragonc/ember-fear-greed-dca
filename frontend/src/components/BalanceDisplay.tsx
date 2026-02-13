@@ -140,6 +140,14 @@ export function BalanceDisplay() {
   if (smartAccountEthBalance < parseEther('0.0001')) {
   alert('Your smart account needs a small amount of ETH for gas fees. Please deposit at least 0.0001 ETH to your smart account first.');
   setIsWithdrawing(false);
+  // Check sufficient balance for the token
+  const withdrawAmountBigInt = withdrawToken === 'ETH' ? parseEther(withdrawAmount) : parseUnits(withdrawAmount, 6);
+  const currentBalance = withdrawToken === 'ETH' ? (wethBalanceRaw as bigint) : (usdcBalanceRaw as bigint);
+  if (withdrawAmountBigInt > currentBalance) {
+  alert(`Insufficient ${withdrawToken} balance in smart account.`);
+  setIsWithdrawing(false);
+  return;
+  }
   return;
   }
 
@@ -231,6 +239,14 @@ export function BalanceDisplay() {
       alert(errorMsg);
     } finally {
       setIsWithdrawing(false);
+  // Check sufficient balance for the token
+  const withdrawAmountBigInt = withdrawToken === 'ETH' ? parseEther(withdrawAmount) : parseUnits(withdrawAmount, 6);
+  const currentBalance = withdrawToken === 'ETH' ? (wethBalanceRaw as bigint) : (usdcBalanceRaw as bigint);
+  if (withdrawAmountBigInt > currentBalance) {
+  alert(`Insufficient ${withdrawToken} balance in smart account.`);
+  setIsWithdrawing(false);
+  return;
+  }
     }
   };
 
