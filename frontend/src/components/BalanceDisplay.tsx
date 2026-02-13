@@ -221,7 +221,12 @@ export function BalanceDisplay() {
       
       alert('Withdrawal successful!');
     } catch (error) {
-      console.error('Withdraw failed:', error);
+      console.error('Withdraw failed - FULL ERROR:', error);
+  console.error('Error details:', {
+  message: error instanceof Error ? error.message : 'Unknown',
+  stack: error instanceof Error ? error.stack : 'No stack',
+  raw: error
+  });
       // Sanitize error message - don't expose URLs or API keys
       let errorMsg = 'Withdrawal failed';
       if (error instanceof Error) {
@@ -231,6 +236,14 @@ export function BalanceDisplay() {
         if (error.message.includes('insufficient funds')) {
           errorMsg = 'Insufficient ETH in smart account for gas. Deposit some ETH first.';
         } else if (error.message.includes('User rejected')) {
+  } else if (error.message.includes('paymaster')) {
+  errorMsg = `Paymaster error: ${error.message.split('paymaster')[1] || 'Unknown paymaster issue'}`;
+  } else if (error.message.includes('bundler')) {
+  errorMsg = `Bundler error: ${error.message.split('bundler')[1] || 'Unknown bundler issue'}`;
+  } else {
+  // For debugging - show more of the actual error
+  errorMsg = `Withdrawal failed: ${error.message.substring(0, 100)}`;
+
           errorMsg = 'Transaction rejected';
         }
       }
