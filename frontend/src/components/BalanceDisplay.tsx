@@ -163,6 +163,9 @@ export function BalanceDisplay() {
         chain: base,
         bundlerTransport: http(BUNDLER_URL),
         paymaster: pimlicoClient,
+  paymasterContext: {
+    token: withdrawToken === 'WETH' ? WETH_ADDRESS : TOKENS.USDC,
+  },
   userOperation: {
   estimateFeesPerGas: async () => {
   return (await pimlicoClient.getUserOperationGasPrice()).fast;
