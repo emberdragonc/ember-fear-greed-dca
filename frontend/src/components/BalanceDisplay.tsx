@@ -211,8 +211,20 @@ export function BalanceDisplay() {
         data: txParams.data.substring(0, 50) + '...',
       }, null, 2));
 
-      // Send transaction through smart account client (handles sponsorship automatically)
-      const txHash = await smartAccountClient.sendTransaction(txParams as any);
+      // Send using sendUserOperation with explicit calls array (more reliable than sendTransaction)
+      const userOpHash = await smartAccountClient.sendUserOperation({
+        calls: [{
+          to: txParams.to,
+          value: txParams.value,
+          data: txParams.data,
+        }],
+      });
+      
+      console.log(`[${withdrawToken}] UserOp hash:`, userOpHash);
+      
+      // Wait for transaction receipt
+      const receipt = await smartAccountClient.waitForUserOperationReceipt({ hash: userOpHash });
+      const txHash = receipt.receipt.transactionHash;
       
       console.log('Withdrawal tx:', txHash);
       
