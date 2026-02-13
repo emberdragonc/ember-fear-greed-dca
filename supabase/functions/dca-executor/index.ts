@@ -1,5 +1,5 @@
 // Fear & Greed DCA Executor - Supabase Edge Function
-// Complete implementation with swap execution, approvals, and fee collection
+// COMPLETE IMPLEMENTATION with UserOperation execution and fee collection
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -10,10 +10,12 @@ import {
   parseUnits, 
   formatUnits, 
   encodeFunctionData,
+  encodeAbiParameters,
+  parseAbiParameters,
+  keccak256,
   erc20Abi,
   type Address,
   type Hex,
-  type TransactionReceipt
 } from 'https://esm.sh/viem@2.21.45'
 import { base } from 'https://esm.sh/viem@2.21.45/chains'
 import { privateKeyToAccount } from 'https://esm.sh/viem@2.21.45/accounts'
@@ -43,6 +45,7 @@ const ADDRESSES = {
   PERMIT2: '0x000000000022D473030F116dDEE9F6B43aC78BA3' as Address,
   DELEGATION_MANAGER: '0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3' as Address,
   EMBER_STAKING: '0x434B2A0e38FB3E5D2ACFa2a7aE492C2A53E55Ec9' as Address,
+  SIMPLE_ACCOUNT_FACTORY: '0x91E60e0613810449d098b0b5Ec8b51A0FE8c8985' as Address,
 }
 
 const FEE_BPS = 20
@@ -54,6 +57,8 @@ const SLIPPAGE_THRESHOLD_USD = 100
 const MIN_SWAP_AMOUNT = parseUnits('0.10', 6)
 const TRADING_API = 'https://trade-api.gateway.uniswap.org/v1'
 const EXPECTED_DELEGATE = '0xc472e866045d2e9ABd2F2459cE3BDB275b72C7e1'.toLowerCase()
+const OPTIMAL_BATCH_SIZE = 50
+const BATCH_DELAY_MS = 500
 
 const UNISWAP_ROUTERS = [
   '0x6fF5693b99212Da76ad316178A184AB56D299b43',
@@ -102,6 +107,19 @@ interface WalletData {
   swapAmount: bigint
   swapAmountAfterFee: bigint
   fee: bigint
+}
+
+interface PreparedSwap {
+  walletData: WalletData
+  swapQuote: { quote: any; swap: any; timestamp: number }
+  nonceKey: bigint
+}
+
+interface BatchSendResult {
+  success: boolean
+  userOpHash: string | null
+  error: string | null
+  walletAddress: string
 }
 
 // ============ ABIs ============
@@ -230,6 +248,66 @@ async function withRetry<T>(
   return null
 }
 
+// ============ DELEGATION FRAMEWORK ============
+
+enum ExecutionMode {
+  SingleDefault = 0,
+  Batch = 1,
+}
+
+function createExecution(target: Address, value: bigint, callData: Hex): Hex {
+  // Encode execution as: abi.encode(address target, uint256 value, bytes callData)
+  return encodeAbiParameters(
+    parseAbiParameters('address, uint256, bytes'),
+    [target, value, callData]
+  )
+}
+
+function encodeRedeemDelegations(
+  delegations: Hex[][],
+  modes: number[],
+  executions: Hex[][]
+): Hex {
+  return encodeFunctionData({
+    abi: delegationManagerAbi,
+    functionName: 'redeemDelegations',
+    args: [delegations, modes, executions],
+  })
+}
+
+function encodeDelegation(signedDelegation: any): Hex {
+  // Encode delegation struct as bytes
+  // struct Delegation { address delegate, address delegator, bytes32 authority, Caveat[] caveats, bytes32 salt, bytes signature }
+  
+  const { delegate, delegator, authority, caveats, salt, signature } = signedDelegation
+  
+  // Encode caveats array
+  const encodedCaveats = caveats.map((caveat: any) => {
+    return encodeAbiParameters(
+      parseAbiParameters('address, bytes'),
+      [caveat.enforcer as Address, caveat.terms as Hex]
+    )
+  })
+  
+  const caveatArrayEncoded = encodeAbiParameters(
+    [{ type: 'tuple[]', components: [{ type: 'address' }, { type: 'bytes' }] }],
+    [caveats.map((c: any) => [c.enforcer, c.terms])]
+  )
+  
+  // Encode full delegation struct
+  return encodeAbiParameters(
+    parseAbiParameters('address, address, bytes32, tuple(address enforcer, bytes terms)[], bytes32, bytes'),
+    [
+      delegate as Address,
+      delegator as Address,
+      authority as Hex,
+      caveats.map((c: any) => ({ enforcer: c.enforcer as Address, terms: c.terms as Hex })),
+      salt as Hex,
+      signature as Hex,
+    ]
+  )
+}
+
 // ============ ETH PRICE ============
 
 let cachedEthPrice: number | null = null
@@ -276,12 +354,11 @@ async function getETHPriceFromUniswap(uniswapApiKey: string): Promise<number> {
     cachedEthPrice = ethPrice
     ethPriceCacheTime = now
 
-    console.log(`[ETH Price] $${ethPrice.toFixed(2)} from Uniswap`)
+    console.log(`[ETH Price] $${ethPrice.toFixed(2)}`)
     return ethPrice
   } catch (error) {
     console.error('[ETH Price] Failed:', error)
     if (cachedEthPrice) {
-      console.log(`[ETH Price] Using stale cached: $${cachedEthPrice.toFixed(2)}`)
       return cachedEthPrice
     }
     cachedEthPrice = 2500
@@ -311,11 +388,11 @@ async function fetchSwapQuote(
   swapper: Address,
   slippageBps: number,
   uniswapApiKey: string
-): Promise<{ quote: any; swap: any } | null> {
-  const slippageTolerance = slippageBps / 100 // Convert to percentage
+): Promise<{ quote: any; swap: any; timestamp: number } | null> {
+  const slippageTolerance = slippageBps / 100
 
   try {
-    const response = await fetch(`${TRADING_API}/quote`, {
+    const quoteResponse = await fetch(`${TRADING_API}/quote`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -333,199 +410,409 @@ async function fetchSwapQuote(
       }),
     })
 
-    if (!response.ok) {
-      console.error(`[Quote] API returned ${response.status}`)
+    if (!quoteResponse.ok) {
+      console.error(`[Quote] API returned ${quoteResponse.status}`)
       return null
     }
 
-    const data = await response.json()
+    const quoteData = await quoteResponse.json()
     
-    if (!data.quote || !data.swap) {
+    if (!quoteData.quote) {
       console.error('[Quote] Invalid response structure')
       return null
     }
 
-    // Validate router
-    if (!isValidUniswapRouter(data.swap.to)) {
-      console.error(`[Quote] Router whitelist rejection: ${data.swap.to}`)
+    // Get swap calldata
+    const { permitData, permitTransaction, ...cleanQuote } = quoteData
+    
+    const swapResponse = await fetch(`${TRADING_API}/swap`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': uniswapApiKey,
+      },
+      body: JSON.stringify(cleanQuote),
+    })
+
+    if (!swapResponse.ok) {
+      console.error(`[Swap] API returned ${swapResponse.status}`)
       return null
     }
 
-    return { quote: data.quote, swap: data.swap }
+    const swapData = await swapResponse.json()
+
+    // Validate router
+    if (!isValidUniswapRouter(swapData.swap.to)) {
+      console.error(`[Quote] Router whitelist rejection: ${swapData.swap.to}`)
+      return null
+    }
+
+    return { 
+      quote: quoteData, 
+      swap: swapData.swap, 
+      timestamp: Date.now() 
+    }
   } catch (error) {
     console.error('[Quote] Fetch failed:', error)
     return null
   }
 }
 
-// ============ APPROVALS ============
+// ============ USEROP EXECUTION ============
 
-async function checkAndApprove(
-  publicClient: any,
-  walletClient: any,
-  owner: Address,
-  token: Address,
-  spender: Address,
-  amount: bigint
-): Promise<boolean> {
+async function buildAndSendUserOp(
+  smartAccountClient: any,
+  backendSmartAccount: any,
+  delegation: DelegationRecord,
+  swapQuote: { quote: any; swap: any },
+  nonceKey: bigint
+): Promise<{ userOpHash: string | null; error: string | null }> {
   try {
-    // Check current allowance
-    const allowance = await publicClient.readContract({
-      address: token,
-      abi: erc20Abi,
-      functionName: 'allowance',
-      args: [owner, spender],
-    })
+    const signedDelegation = typeof delegation.delegation_data === 'string'
+      ? JSON.parse(delegation.delegation_data)
+      : delegation.delegation_data
 
-    if (allowance >= amount) {
-      console.log(`[Approval] Sufficient allowance: ${formatUnits(allowance, 6)}`)
-      return true
+    if (!signedDelegation.signature) {
+      throw new Error('Delegation missing signature')
     }
 
-    // Need approval
-    console.log(`[Approval] Approving ${formatUnits(amount, 6)}...`)
-    const hash = await walletClient.writeContract({
-      address: token,
-      abi: erc20Abi,
-      functionName: 'approve',
-      args: [spender, amount],
-      account: owner,
+    // Create execution for the swap
+    const execution = createExecution(
+      swapQuote.swap.to as Address,
+      BigInt(swapQuote.swap.value || '0'),
+      swapQuote.swap.data as Hex
+    )
+
+    // Encode delegation as bytes
+    const encodedDelegation = encodeDelegation(signedDelegation)
+
+    // Build redeemDelegations calldata
+    const redeemCalldata = encodeRedeemDelegations(
+      [[encodedDelegation]],
+      [ExecutionMode.SingleDefault],
+      [[execution]]
+    )
+
+    // Prepare nonce
+    const nonce = encodeNonce({ key: nonceKey, sequence: 0n })
+
+    console.log(`[UserOp] Building for nonce key: ${nonceKey.toString()}`)
+
+    // Send UserOperation
+    const userOpHash = await smartAccountClient.sendUserOperation({
+      account: backendSmartAccount,
+      nonce,
+      calls: [{
+        to: ADDRESSES.DELEGATION_MANAGER,
+        data: redeemCalldata,
+        value: 0n,
+      }],
     })
 
-    console.log(`[Approval] Tx: ${hash}`)
-    await publicClient.waitForTransactionReceipt({ hash })
-    console.log(`[Approval] ✓ Confirmed`)
-    return true
-  } catch (error) {
-    console.error('[Approval] Failed:', error)
-    return false
+    console.log(`[UserOp] Submitted: ${userOpHash}`)
+    return { userOpHash, error: null }
+    
+  } catch (error: any) {
+    console.error('[UserOp] Build/send failed:', error)
+    return { userOpHash: null, error: error?.message || 'Unknown error' }
   }
 }
 
-// ============ SMART ACCOUNT SETUP ============
+async function waitForUserOpReceipt(
+  bundlerClient: any,
+  userOpHash: string,
+  walletAddress: string
+): Promise<{ success: boolean; txHash: string | null; error: string | null }> {
+  try {
+    console.log(`[Receipt] Waiting for ${walletAddress.slice(0, 10)}...`)
+    
+    const receipt = await bundlerClient.waitForUserOperationReceipt({
+      hash: userOpHash as `0x${string}`,
+      timeout: 120000,
+    })
 
-async function initSmartAccount(
-  backendAccount: any,
-  alchemyRpc: string,
-  pimlicoApiKey: string
-): Promise<any> {
-  const publicClient = createPublicClient({
-    chain: base,
-    transport: http(alchemyRpc),
-  })
-
-  const simpleAccount = await signerToSimpleSmartAccount(publicClient, {
-    signer: backendAccount,
-    entryPoint: ENTRYPOINT_ADDRESS_V07,
-    factoryAddress: '0x91E60e0613810449d098b0b5Ec8b51A0FE8c8985' as Address,
-  })
-
-  const bundlerClient = createPublicClient({
-    chain: base,
-    transport: http(`https://api.pimlico.io/v2/base/rpc?apikey=${pimlicoApiKey}`),
-  }).extend(pimlicoBundlerActions(ENTRYPOINT_ADDRESS_V07))
-
-  const pimlicoPaymaster = createPublicClient({
-    chain: base,
-    transport: http(`https://api.pimlico.io/v2/8453/rpc?apikey=${pimlicoApiKey}`),
-  }).extend(pimlicoPaymasterActions(ENTRYPOINT_ADDRESS_V07))
-
-  const smartAccountClient = createSmartAccountClient({
-    account: simpleAccount,
-    entryPoint: ENTRYPOINT_ADDRESS_V07,
-    chain: base,
-    bundlerTransport: http(`https://api.pimlico.io/v2/base/rpc?apikey=${pimlicoApiKey}`),
-    middleware: {
-      gasPrice: async () => {
-        return await bundlerClient.getUserOperationGasPrice()
-      },
-      sponsorUserOperation: async ({ userOperation }) => {
-        return await pimlicoPaymaster.sponsorUserOperation({ userOperation })
-      },
-    },
-  })
-
-  return { smartAccountClient, publicClient, bundlerClient }
-}
-
-// ============ SWAP EXECUTION ============
-
-async function executeSwap(
-  walletData: WalletData,
-  decision: DCADecision,
-  ethPriceUsd: number,
-  clients: any,
-  uniswapApiKey: string,
-  supabase: any
-): Promise<ExecutionResult> {
-  const { delegation, smartAccountAddress, swapAmount, swapAmountAfterFee, fee } = walletData
-  const { publicClient } = clients
-  
-  const isBuy = decision.action === 'buy'
-  const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH
-  const tokenOut = isBuy ? ADDRESSES.WETH : ADDRESSES.USDC
-  const decimalsIn = isBuy ? 6 : 18
-
-  console.log(`\n[Swap] ${smartAccountAddress.slice(0, 10)}...`)
-  console.log(`  Amount: ${formatUnits(swapAmountAfterFee, decimalsIn)} ${isBuy ? 'USDC' : 'WETH'}`)
-  console.log(`  Fee: ${formatUnits(fee, decimalsIn)} ${isBuy ? 'USDC' : 'WETH'}`)
-
-  // Calculate slippage based on swap size
-  const swapValueUsd = isBuy 
-    ? Number(formatUnits(swapAmountAfterFee, 6))
-    : Number(formatUnits(swapAmountAfterFee, 18)) * ethPriceUsd
-  const slippageBps = getSlippageBpsForSwap(swapValueUsd)
-
-  // Fetch quote
-  const quoteResult = await withRetry(
-    () => fetchSwapQuote(tokenIn, tokenOut, swapAmountAfterFee, smartAccountAddress, slippageBps, uniswapApiKey),
-    3,
-    2000,
-    'fetchQuote'
-  )
-
-  if (!quoteResult) {
+    if (receipt.success) {
+      console.log(`[Receipt] ✅ ${walletAddress.slice(0, 10)}: ${receipt.receipt.transactionHash}`)
+      return {
+        success: true,
+        txHash: receipt.receipt.transactionHash,
+        error: null,
+      }
+    } else {
+      console.log(`[Receipt] ❌ ${walletAddress.slice(0, 10)}: UserOp reverted`)
+      return {
+        success: false,
+        txHash: null,
+        error: 'UserOperation reverted on-chain',
+      }
+    }
+  } catch (error: any) {
+    console.error(`[Receipt] Timeout for ${walletAddress.slice(0, 10)}:`, error)
     return {
       success: false,
       txHash: null,
-      error: 'Failed to fetch quote after retries',
-      errorType: 'quote_failed',
-      amountIn: '0',
-      amountOut: '0',
-      feeCollected: '0',
-      retryCount: 0,
-      lastError: 'Quote fetch failed',
-      walletAddress: smartAccountAddress,
+      error: `Receipt timeout: ${error?.message || 'Unknown'}`,
+    }
+  }
+}
+
+// ============ FEE COLLECTION ============
+
+async function collectFee(
+  walletClient: any,
+  publicClient: any,
+  delegation: DelegationRecord,
+  tokenAddress: Address,
+  amount: bigint,
+  backendAccount: any
+): Promise<string | null> {
+  if (amount === 0n) return null
+
+  try {
+    console.log(`[Fee] Collecting ${formatUnits(amount, tokenAddress === ADDRESSES.USDC ? 6 : 18)} ${tokenAddress === ADDRESSES.USDC ? 'USDC' : 'WETH'}`)
+
+    const signedDelegation = typeof delegation.delegation_data === 'string'
+      ? JSON.parse(delegation.delegation_data)
+      : delegation.delegation_data
+
+    // Transfer from smart account to backend EOA
+    const transferCalldata = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: 'transfer',
+      args: [backendAccount.address, amount],
+    })
+
+    const execution = createExecution(tokenAddress, 0n, transferCalldata)
+    const encodedDelegation = encodeDelegation(signedDelegation)
+    
+    const redeemCalldata = encodeRedeemDelegations(
+      [[encodedDelegation]],
+      [ExecutionMode.SingleDefault],
+      [[execution]]
+    )
+
+    const transferTx = await walletClient.writeContract({
+      address: ADDRESSES.DELEGATION_MANAGER,
+      abi: delegationManagerAbi,
+      functionName: 'redeemDelegations',
+      args: [
+        [[encodedDelegation]],
+        [ExecutionMode.SingleDefault],
+        [[execution]]
+      ],
+      account: backendAccount,
+    })
+
+    await publicClient.waitForTransactionReceipt({ hash: transferTx })
+    console.log(`[Fee] Transferred to backend: ${transferTx}`)
+
+    // Approve EMBER Staking
+    const approveTx = await walletClient.writeContract({
+      address: tokenAddress,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [ADDRESSES.EMBER_STAKING, amount],
+      account: backendAccount,
+    })
+
+    await publicClient.waitForTransactionReceipt({ hash: approveTx })
+    console.log(`[Fee] Approved EMBER Staking`)
+
+    // Deposit to staking
+    const depositTx = await walletClient.writeContract({
+      address: ADDRESSES.EMBER_STAKING,
+      abi: emberStakingAbi,
+      functionName: 'depositRewards',
+      args: [tokenAddress, amount],
+      account: backendAccount,
+    })
+
+    await publicClient.waitForTransactionReceipt({ hash: depositTx })
+    console.log(`[Fee] ✅ Deposited to stakers: ${depositTx}`)
+
+    return depositTx
+  } catch (error) {
+    console.error('[Fee] Collection failed:', error)
+    return null
+  }
+}
+
+// ============ PARALLEL SWAP PROCESSING ============
+
+async function processSwapsParallel(
+  delegations: DelegationRecord[],
+  decision: DCADecision,
+  ethPriceUsd: number,
+  clients: any,
+  uniswapApiKey: string
+): Promise<{ results: ExecutionResult[]; totalVolume: bigint; totalFees: bigint }> {
+  const { smartAccountClient, publicClient, bundlerClient, backendSmartAccount, walletClient, backendAccount } = clients
+  
+  const isBuy = decision.action === 'buy'
+  const tokenDecimals = isBuy ? 6 : 18
+  const tokenSymbol = isBuy ? 'USDC' : 'WETH'
+
+  console.log(`\n[Parallel] Processing ${delegations.length} wallets...`)
+
+  // Phase 1: Prepare wallet data
+  const walletDataList: WalletData[] = []
+  
+  for (const delegation of delegations) {
+    try {
+      const smartAccountAddress = delegation.smart_account_address as Address
+      const balance = await getBalance(publicClient, smartAccountAddress, isBuy ? 'USDC' : 'WETH')
+
+      if (balance < MIN_SWAP_AMOUNT) {
+        console.log(`[Parallel] ${smartAccountAddress.slice(0, 10)}: Insufficient balance`)
+        continue
+      }
+
+      const percentage = BigInt(Math.round(decision.percentage * 100))
+      let swapAmount = (balance * percentage) / 10000n
+      const maxAmount = BigInt(delegation.max_amount_per_swap)
+      if (swapAmount > maxAmount) swapAmount = maxAmount
+
+      const fee = calculateFee(swapAmount)
+      const swapAmountAfterFee = swapAmount - fee
+
+      walletDataList.push({
+        delegation,
+        smartAccountAddress,
+        balance,
+        swapAmount,
+        swapAmountAfterFee,
+        fee,
+      })
+    } catch (error) {
+      console.error(`[Parallel] Error preparing wallet:`, error)
     }
   }
 
-  const { quote, swap } = quoteResult
+  console.log(`[Parallel] ${walletDataList.length} wallets ready`)
 
-  // For now, we'll log the swap data but not execute (needs MetaMask delegation framework)
-  // This would require porting the full delegation redemption logic
-  console.log(`  Quote: ${formatUnits(BigInt(quote.output.amount), isBuy ? 18 : 6)} ${isBuy ? 'WETH' : 'USDC'}`)
-  console.log(`  ⚠️  Execution requires MetaMask delegation framework (TODO)`)
+  const allResults: ExecutionResult[] = []
+  let totalVolume = 0n
+  let totalFees = 0n
 
-  // TODO: Implement full UserOperation with delegation redemption
-  // This requires:
-  // 1. Building the redeemDelegations calldata
-  // 2. Creating UserOperation
-  // 3. Signing and submitting to bundler
-  // 4. Waiting for receipt
-  // 5. Collecting fees
+  // Phase 2: Process in batches
+  const PHASE2_TIMESTAMP = BigInt(Date.now())
+  
+  for (let batchIndex = 0; batchIndex < walletDataList.length; batchIndex += OPTIMAL_BATCH_SIZE) {
+    const batch = walletDataList.slice(batchIndex, batchIndex + OPTIMAL_BATCH_SIZE)
+    console.log(`\n[Batch ${Math.floor(batchIndex/OPTIMAL_BATCH_SIZE) + 1}] Processing ${batch.length} swaps...`)
 
-  return {
-    success: false,
-    txHash: null,
-    error: 'Execution not yet implemented',
-    errorType: 'not_implemented',
-    amountIn: swapAmountAfterFee.toString(),
-    amountOut: quote.output.amount,
-    feeCollected: fee.toString(),
-    retryCount: 0,
-    lastError: 'Full swap execution pending implementation',
-    walletAddress: smartAccountAddress,
+    // Step 1: Fetch quotes in parallel
+    const preparedSwaps = await Promise.all(
+      batch.map(async (walletData, index) => {
+        const globalIndex = batchIndex + index
+        const nonceKey = PHASE2_TIMESTAMP * 1000000n + BigInt(globalIndex)
+        
+        const tokenIn = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH
+        const tokenOut = isBuy ? ADDRESSES.WETH : ADDRESSES.USDC
+        
+        const swapValueUsd = isBuy 
+          ? Number(formatUnits(walletData.swapAmountAfterFee, 6))
+          : Number(formatUnits(walletData.swapAmountAfterFee, 18)) * ethPriceUsd
+        const slippageBps = getSlippageBpsForSwap(swapValueUsd)
+
+        const quote = await withRetry(
+          () => fetchSwapQuote(
+            tokenIn,
+            tokenOut,
+            walletData.swapAmountAfterFee,
+            walletData.smartAccountAddress,
+            slippageBps,
+            uniswapApiKey
+          ),
+          3,
+          2000,
+          'fetchQuote'
+        )
+
+        if (!quote) return null
+
+        return { walletData, swapQuote: quote, nonceKey }
+      })
+    )
+
+    const validPreparedSwaps = preparedSwaps.filter((s): s is PreparedSwap => s !== null)
+    console.log(`[Batch] Quotes: ${validPreparedSwaps.length}/${batch.length}`)
+
+    // Step 2: Send UserOps in parallel
+    const userOpResults = await Promise.all(
+      validPreparedSwaps.map(prepared =>
+        buildAndSendUserOp(
+          smartAccountClient,
+          backendSmartAccount,
+          prepared.walletData.delegation,
+          prepared.swapQuote,
+          prepared.nonceKey
+        )
+      )
+    )
+
+    // Step 3: Wait for receipts in parallel
+    const receipts = await Promise.all(
+      userOpResults.map((result, index) => {
+        if (!result.userOpHash) {
+          return Promise.resolve({
+            success: false,
+            txHash: null,
+            error: result.error || 'UserOp submission failed',
+          })
+        }
+        return waitForUserOpReceipt(
+          bundlerClient,
+          result.userOpHash,
+          validPreparedSwaps[index].walletData.smartAccountAddress
+        )
+      })
+    )
+
+    // Step 4: Process results and collect fees
+    for (let i = 0; i < validPreparedSwaps.length; i++) {
+      const prepared = validPreparedSwaps[i]
+      const receipt = receipts[i]
+
+      const result: ExecutionResult = {
+        success: receipt.success,
+        txHash: receipt.txHash,
+        error: receipt.error,
+        errorType: receipt.success ? null : 'unknown',
+        amountIn: prepared.walletData.swapAmountAfterFee.toString(),
+        amountOut: prepared.swapQuote.quote.quote.output.amount,
+        feeCollected: receipt.success ? prepared.walletData.fee.toString() : '0',
+        retryCount: 0,
+        lastError: receipt.error,
+        walletAddress: prepared.walletData.smartAccountAddress,
+      }
+
+      allResults.push(result)
+
+      if (receipt.success) {
+        totalVolume += prepared.walletData.swapAmountAfterFee
+        totalFees += prepared.walletData.fee
+
+        // Collect fee in background (non-blocking)
+        const tokenAddress = isBuy ? ADDRESSES.USDC : ADDRESSES.WETH
+        collectFee(
+          walletClient,
+          publicClient,
+          prepared.walletData.delegation,
+          tokenAddress,
+          prepared.walletData.fee,
+          backendAccount
+        ).catch(err => console.error('[Fee] Background collection failed:', err))
+      }
+    }
+
+    // Rate limiting between batches
+    if (batchIndex + OPTIMAL_BATCH_SIZE < walletDataList.length) {
+      await sleep(BATCH_DELAY_MS)
+    }
   }
+
+  return { results: allResults, totalVolume, totalFees }
 }
 
 // ============ MAIN HANDLER ============
@@ -557,12 +844,54 @@ serve(async (req) => {
       transport: http(alchemyRpc),
     })
 
+    // Initialize smart account
+    const simpleAccount = await signerToSimpleSmartAccount(publicClient, {
+      signer: backendAccount,
+      entryPoint: ENTRYPOINT_ADDRESS_V07,
+      factoryAddress: ADDRESSES.SIMPLE_ACCOUNT_FACTORY,
+    })
+
+    const bundlerClient = createPublicClient({
+      chain: base,
+      transport: http(`https://api.pimlico.io/v2/base/rpc?apikey=${PIMLICO_API_KEY}`),
+    }).extend(pimlicoBundlerActions(ENTRYPOINT_ADDRESS_V07))
+
+    const pimlicoPaymaster = createPublicClient({
+      chain: base,
+      transport: http(`https://api.pimlico.io/v2/8453/rpc?apikey=${PIMLICO_API_KEY}`),
+    }).extend(pimlicoPaymasterActions(ENTRYPOINT_ADDRESS_V07))
+
+    const smartAccountClient = createSmartAccountClient({
+      account: simpleAccount,
+      entryPoint: ENTRYPOINT_ADDRESS_V07,
+      chain: base,
+      bundlerTransport: http(`https://api.pimlico.io/v2/base/rpc?apikey=${PIMLICO_API_KEY}`),
+      middleware: {
+        gasPrice: async () => {
+          return await bundlerClient.getUserOperationGasPrice()
+        },
+        sponsorUserOperation: async ({ userOperation }) => {
+          return await pimlicoPaymaster.sponsorUserOperation({ userOperation })
+        },
+      },
+    })
+
+    const clients = {
+      smartAccountClient,
+      publicClient,
+      bundlerClient,
+      backendSmartAccount: simpleAccount,
+      walletClient,
+      backendAccount,
+    }
+
     console.log('========================================')
     console.log('  Fear & Greed DCA Executor')
-    console.log('  Supabase Edge Function v1.0')
+    console.log('  Supabase Edge Function v2.0')
     console.log('========================================')
     console.log(`Time: ${new Date().toISOString()}`)
     console.log(`Backend EOA: ${backendAccount.address}`)
+    console.log(`Backend Smart Account: ${simpleAccount.address}`)
 
     // Check backend balance
     const backendBalance = await publicClient.getBalance({ address: backendAccount.address })
@@ -661,92 +990,35 @@ serve(async (req) => {
     // 5. Get ETH price
     const ethPriceUsd = await getETHPriceFromUniswap(UNISWAP_API_KEY)
 
-    // 6. Process wallets
-    const isBuy = decision.action === 'buy'
-    const results: ExecutionResult[] = []
-    let successCount = 0
-    let totalVolume = 0n
-    let totalFees = 0n
+    // 6. Process swaps in parallel
+    const { results, totalVolume, totalFees } = await processSwapsParallel(
+      validDelegations,
+      decision,
+      ethPriceUsd,
+      clients,
+      UNISWAP_API_KEY
+    )
 
-    console.log('\n========================================')
-    console.log(`  Processing ${validDelegations.length} Wallets`)
-    console.log('========================================')
+    const successCount = results.filter(r => r.success).length
 
-    // Initialize smart account client
-    const clients = await initSmartAccount(backendAccount, alchemyRpc, PIMLICO_API_KEY)
-
-    for (const delegation of validDelegations) {
-      const smartAccountAddress = delegation.smart_account_address as Address
-      
-      try {
-        // Get balance
-        const balance = await getBalance(
-          publicClient, 
-          smartAccountAddress, 
-          isBuy ? 'USDC' : 'WETH'
-        )
-
-        // Calculate swap amount
-        const swapAmount = (balance * BigInt(Math.round(decision.percentage * 100))) / 10000n
-        
-        if (swapAmount < MIN_SWAP_AMOUNT) {
-          console.log(`[Skip] ${smartAccountAddress.slice(0, 10)}: Amount too small`)
-          continue
-        }
-
-        // Calculate fee
-        const fee = calculateFee(swapAmount)
-        const swapAmountAfterFee = swapAmount - fee
-
-        const walletData: WalletData = {
-          delegation,
-          smartAccountAddress,
-          balance,
-          swapAmount,
-          swapAmountAfterFee,
-          fee,
-        }
-
-        // Execute swap
-        const result = await executeSwap(
-          walletData,
-          decision,
-          ethPriceUsd,
-          clients,
-          UNISWAP_API_KEY,
-          supabase
-        )
-
-        results.push(result)
-
-        if (result.success) {
-          successCount++
-          totalVolume += BigInt(result.amountIn)
-          totalFees += BigInt(result.feeCollected)
-        }
-
-        // Log to database
-        await supabase.from('dca_executions').insert({
-          delegation_id: delegation.id,
-          user_address: delegation.user_address,
-          fear_greed_index: fgValue,
-          decision: decision.action,
-          success: result.success,
-          tx_hash: result.txHash,
-          amount_in: result.amountIn,
-          amount_out: result.amountOut,
-          fee_collected: result.feeCollected,
-          error: result.error,
-          error_type: result.errorType,
-        })
-
-        await sleep(1000) // Rate limiting
-      } catch (error) {
-        console.error(`[Error] ${smartAccountAddress.slice(0, 10)}:`, error)
-      }
+    // 7. Log individual executions
+    for (const result of results) {
+      await supabase.from('dca_executions').insert({
+        delegation_id: validDelegations.find(d => d.smart_account_address === result.walletAddress)?.id,
+        user_address: validDelegations.find(d => d.smart_account_address === result.walletAddress)?.user_address,
+        fear_greed_index: fgValue,
+        decision: decision.action,
+        success: result.success,
+        tx_hash: result.txHash,
+        amount_in: result.amountIn,
+        amount_out: result.amountOut,
+        fee_collected: result.feeCollected,
+        error: result.error,
+        error_type: result.errorType,
+      })
     }
 
-    // 7. Log summary
+    // 8. Log daily summary
     await supabase.from('dca_daily_executions').insert({
       execution_date: new Date().toISOString().split('T')[0],
       fear_greed_index: fgValue,
