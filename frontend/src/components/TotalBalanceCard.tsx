@@ -55,10 +55,10 @@ export function TotalBalanceCard() {
   
   // Deposit/Withdraw state
   const [depositAmount, setDepositAmount] = useState('');
-  const [depositToken, setDepositToken] = useState<'ETH' | 'USDC'>('USDC');
+  const [depositToken, setDepositToken] = useState<'WETH' | 'USDC'>('USDC');
   const [showDeposit, setShowDeposit] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState('');
-  const [withdrawToken, setWithdrawToken] = useState<'ETH' | 'USDC'>('USDC');
+  const [withdrawToken, setWithdrawToken] = useState<'WETH' | 'USDC'>('USDC');
   const [showWithdraw, setShowWithdraw] = useState(false);
   const [isWithdrawing, setIsWithdrawing] = useState(false);
 
@@ -127,7 +127,8 @@ export function TotalBalanceCard() {
   const handleDeposit = async () => {
     if (!smartAccountAddress || !depositAmount) return;
     try {
-      if (depositToken === 'ETH') {
+      if (depositToken === 'WETH') {
+        // Deposit native ETH which wraps to WETH
         await sendTransaction({
           to: smartAccountAddress as `0x${string}`,
           value: parseEther(depositAmount),
@@ -162,31 +163,26 @@ export function TotalBalanceCard() {
         chain: base,
         bundlerTransport: http(BUNDLER_URL),
         paymaster: pimlicoClient,
-        paymasterContext: { sponsorshipPolicyId: 'sp_glamorous_leopardon' },
         userOperation: {
           estimateFeesPerGas: async () => (await pimlicoClient.getUserOperationGasPrice()).fast,
         },
       });
 
-      let txParams: { to: `0x${string}`; value: bigint; data: `0x${string}` };
-      if (withdrawToken === 'ETH') {
-        txParams = {
-          to: eoaAddress as `0x${string}`,
-          value: parseEther(withdrawAmount),
-          data: '0x' as `0x${string}`,
-        };
-      } else {
-        const transferData = encodeFunctionData({
-          abi: erc20Abi,
-          functionName: 'transfer',
-          args: [eoaAddress as `0x${string}`, parseUnits(withdrawAmount, 6)],
-        });
-        txParams = {
-          to: TOKENS.USDC as `0x${string}`,
-          value: 0n,
-          data: transferData,
-        };
-      }
+      // Build WETH or USDC transfer (both are ERC20 transfers, NOT native ETH!)
+      const tokenAddress = withdrawToken === 'WETH' ? WETH_ADDRESS : TOKENS.USDC;
+      const amount = withdrawToken === 'WETH' ? parseEther(withdrawAmount) : parseUnits(withdrawAmount, 6);
+      
+      const transferData = encodeFunctionData({
+        abi: erc20Abi,
+        functionName: 'transfer',
+        args: [eoaAddress as `0x${string}`, amount],
+      });
+      
+      const txParams = {
+        to: tokenAddress as `0x${string}`,
+        value: 0n,
+        data: transferData,
+      };
 
       await smartAccountClient.sendTransaction(txParams as any);
       setWithdrawAmount('');
@@ -242,11 +238,11 @@ export function TotalBalanceCard() {
           <div className="flex gap-2 mb-2">
             <select
               value={depositToken}
-              onChange={(e) => setDepositToken(e.target.value as 'ETH' | 'USDC')}
+              onChange={(e) => setDepositToken(e.target.value as 'WETH' | 'USDC')}
               className="px-3 py-2 bg-black/30 border border-white/10 rounded-lg text-white text-sm"
             >
               <option value="USDC">USDC</option>
-              <option value="ETH">ETH</option>
+              <option value="WETH">WETH</option>
             </select>
             <input
               type="number"
@@ -273,11 +269,11 @@ export function TotalBalanceCard() {
           <div className="flex gap-2 mb-2">
             <select
               value={withdrawToken}
-              onChange={(e) => setWithdrawToken(e.target.value as 'ETH' | 'USDC')}
+              onChange={(e) => setWithdrawToken(e.target.value as 'WETH' | 'USDC')}
               className="px-3 py-2 bg-black/30 border border-white/10 rounded-lg text-white text-sm"
             >
               <option value="USDC">USDC</option>
-              <option value="ETH">ETH</option>
+              <option value="WETH">WETH</option>
             </select>
             <input
               type="number"
