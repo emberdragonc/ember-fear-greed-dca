@@ -104,12 +104,14 @@ export function BalanceDisplay() {
     if (!smartAccountAddress || !depositAmount) return;
 
     try {
-      if (depositToken === 'ETH') {
+      if (depositToken === 'WETH') {
+        // For WETH deposits, send native ETH which gets wrapped automatically
         await sendTransaction({
           to: smartAccountAddress as `0x${string}`,
           value: parseEther(depositAmount),
         });
       } else {
+        // USDC transfer
         await writeContract({
           address: TOKENS.USDC,
           abi: erc20Abi,
@@ -134,7 +136,7 @@ export function BalanceDisplay() {
   const handleWithdraw = async () => {
     if (!smartAccountAddress || !eoaAddress || !withdrawAmount || !smartAccount || !publicClient) return;
 
-    console.log('🚀 WITHDRAW v2.1 - Force rebuild ' + Date.now());
+    console.log('🚀 WITHDRAW v2.2 - TypeScript fix, sendUserOperation');
     setIsWithdrawing(true);
   // Check if smart account has enough ETH for gas (in case paymaster fails)
   const smartAccountEthBalance = await publicClient.getBalance({ address: smartAccountAddress });
