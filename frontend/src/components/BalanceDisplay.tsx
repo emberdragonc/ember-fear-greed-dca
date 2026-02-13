@@ -164,15 +164,12 @@ export function BalanceDisplay() {
         chain: base,
         bundlerTransport: http(BUNDLER_URL),
         paymaster: pimlicoClient,
-  paymasterContext: {
-    token: withdrawToken === 'WETH' ? WETH_ADDRESS : TOKENS.USDC,
-  },
-  userOperation: {
-  estimateFeesPerGas: async () => {
-  return (await pimlicoClient.getUserOperationGasPrice()).fast;
-  },
-  },
-        });
+        userOperation: {
+          estimateFeesPerGas: async () => {
+            return (await pimlicoClient.getUserOperationGasPrice()).fast;
+          },
+        },
+      });
 
       // Build the withdrawal transaction
       let txParams: { to: `0x${string}`; value: bigint; data: `0x${string}` };
@@ -196,12 +193,7 @@ export function BalanceDisplay() {
           functionName: 'transfer',
           args: [eoaAddress as `0x${string}`, parseUnits(withdrawAmount, 6)],
         });
-        const transferData = encodeFunctionData({
-  abi: erc20Abi,
-  functionName: 'transfer',
-  args: [eoaAddress as `0x${string}`, parseEther(withdrawAmount)],
-  });
-  txParams = {
+        txParams = {
           to: TOKENS.USDC as `0x${string}`,
           value: 0n,
           data: transferData,
