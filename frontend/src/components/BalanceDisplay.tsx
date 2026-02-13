@@ -155,10 +155,6 @@ export function BalanceDisplay() {
       // Create Pimlico client for gas sponsorship
       const pimlicoClient = createPimlicoClient({
         transport: http(BUNDLER_URL),
-        entryPoint: {
-          address: entryPoint07Address,
-          version: '0.7',
-        },
       });
 
       // Create smart account client with Pimlico paymaster (uses pm_sponsorUserOperation)
@@ -169,6 +165,11 @@ export function BalanceDisplay() {
         paymaster: pimlicoClient,
   paymasterContext: {
   sponsorshipPolicyId: 'sp_glamorous_leopardon',
+  },
+  userOperation: {
+  estimateFeesPerGas: async () => {
+  return (await pimlicoClient.getUserOperationGasPrice()).fast;
+  },
   },
         },
       });
