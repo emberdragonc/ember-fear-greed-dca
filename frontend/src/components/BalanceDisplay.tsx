@@ -140,14 +140,15 @@ export function BalanceDisplay() {
   if (smartAccountEthBalance < parseEther('0.0001')) {
   alert('Your smart account needs a small amount of ETH for gas fees. Please deposit at least 0.0001 ETH to your smart account first.');
   setIsWithdrawing(false);
+  return;
+  }
+
   // Check sufficient balance for the token
   const withdrawAmountBigInt = withdrawToken === 'WETH' ? parseEther(withdrawAmount) : parseUnits(withdrawAmount, 6);
   const currentBalance = withdrawToken === 'WETH' ? (wethBalanceRaw as bigint) : (usdcBalanceRaw as bigint);
   if (withdrawAmountBigInt > currentBalance) {
   alert(`Insufficient ${withdrawToken === 'WETH' ? 'WETH' : withdrawToken} balance in smart account.`);
   setIsWithdrawing(false);
-  return;
-  }
   return;
   }
 
@@ -171,8 +172,7 @@ export function BalanceDisplay() {
   return (await pimlicoClient.getUserOperationGasPrice()).fast;
   },
   },
-        },
-      });
+        });
 
       // Build the withdrawal transaction
       let txParams: { to: `0x${string}`; value: bigint; data: `0x${string}` };
@@ -239,7 +239,8 @@ export function BalanceDisplay() {
         if (error.message.includes('insufficient funds')) {
           errorMsg = 'Insufficient ETH in smart account for gas. Deposit some ETH first.';
         } else if (error.message.includes('User rejected')) {
-  } else if (error.message.includes('paymaster')) {
+        } else if (error.message.includes('User rejected')) {
+          errorMsg = 'Transaction rejected';
   errorMsg = `Paymaster error: ${error.message.split('paymaster')[1] || 'Unknown paymaster issue'}`;
   } else if (error.message.includes('bundler')) {
   errorMsg = `Bundler error: ${error.message.split('bundler')[1] || 'Unknown bundler issue'}`;
@@ -247,19 +248,12 @@ export function BalanceDisplay() {
   // For debugging - show more of the actual error
   errorMsg = `Withdrawal failed: ${error.message.substring(0, 100)}`;
 
-          errorMsg = 'Transaction rejected';
         }
       }
       alert(errorMsg);
     } finally {
       setIsWithdrawing(false);
   // Check sufficient balance for the token
-  const withdrawAmountBigInt = withdrawToken === 'WETH' ? parseEther(withdrawAmount) : parseUnits(withdrawAmount, 6);
-  const currentBalance = withdrawToken === 'WETH' ? (wethBalanceRaw as bigint) : (usdcBalanceRaw as bigint);
-  if (withdrawAmountBigInt > currentBalance) {
-  alert(`Insufficient ${withdrawToken === 'WETH' ? 'WETH' : withdrawToken} balance in smart account.`);
-  setIsWithdrawing(false);
-  return;
   }
     }
   };
