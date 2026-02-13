@@ -163,9 +163,6 @@ export function BalanceDisplay() {
         chain: base,
         bundlerTransport: http(BUNDLER_URL),
         paymaster: pimlicoClient,
-  paymasterContext: {
-  sponsorshipPolicyId: 'sp_glamorous_leopardon',
-  },
   userOperation: {
   estimateFeesPerGas: async () => {
   return (await pimlicoClient.getUserOperationGasPrice()).fast;
