@@ -177,11 +177,11 @@ export function BalanceDisplay() {
       if (withdrawToken === 'WETH') {
         // ETH: Transfer WETH to EOA (DCA buys WETH, not native ETH)
         const transferData = encodeFunctionData({
-  abi: erc20Abi,
-  functionName: 'transfer',
-  args: [eoaAddress as `0x${string}`, parseEther(withdrawAmount)],
-  });
-  txParams = {
+          abi: erc20Abi,
+          functionName: 'transfer',
+          args: [eoaAddress as `0x${string}`, parseEther(withdrawAmount)],
+        });
+        txParams = {
           to: WETH_ADDRESS as `0x${string}`,
           value: 0n,
           data: transferData,
@@ -199,6 +199,13 @@ export function BalanceDisplay() {
           data: transferData,
         };
       }
+
+      console.log(`[${withdrawToken}] TX Params:`, JSON.stringify({
+        to: txParams.to,
+        value: txParams.value.toString(),
+        dataLength: txParams.data.length,
+        data: txParams.data.substring(0, 50) + '...',
+      }, null, 2));
 
       // Send transaction through smart account client (handles sponsorship automatically)
       const txHash = await smartAccountClient.sendTransaction(txParams as any);
