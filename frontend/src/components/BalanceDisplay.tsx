@@ -136,7 +136,7 @@ export function BalanceDisplay() {
   const handleWithdraw = async () => {
     if (!smartAccountAddress || !eoaAddress || !withdrawAmount || !smartAccount || !publicClient) return;
 
-    console.log('🚀 WITHDRAW v2.2 - TypeScript fix, sendUserOperation');
+    console.log('🚀 WITHDRAW v3.0 - Detailed transfer encoding debug');
     setIsWithdrawing(true);
   // Check if smart account has enough ETH for gas (in case paymaster fails)
   const smartAccountEthBalance = await publicClient.getBalance({ address: smartAccountAddress as `0x${string}` });
@@ -178,56 +178,36 @@ export function BalanceDisplay() {
       });
       console.log(`[${withdrawToken}] Smart account client created`);
 
-      // Build the withdrawal transaction
-      let txParams: { to: `0x${string}`; value: bigint; data: `0x${string}` };
+      // Build the withdrawal transaction - IDENTICAL for both WETH and USDC
+      const tokenAddress = withdrawToken === 'WETH' ? WETH_ADDRESS : TOKENS.USDC;
+      const amount = withdrawToken === 'WETH' ? parseEther(withdrawAmount) : parseUnits(withdrawAmount, 6);
       
-      if (withdrawToken === 'WETH') {
-        // ETH: Transfer WETH to EOA (DCA buys WETH, not native ETH)
-        const transferData = encodeFunctionData({
-          abi: erc20Abi,
-          functionName: 'transfer',
-          args: [eoaAddress as `0x${string}`, parseEther(withdrawAmount)],
-        });
-        txParams = {
-          to: WETH_ADDRESS as `0x${string}`,
-          value: 0n,
-          data: transferData,
-        };
-      } else {
-        // USDC: Call transfer on USDC contract
-        const transferData = encodeFunctionData({
-          abi: erc20Abi,
-          functionName: 'transfer',
-          args: [eoaAddress as `0x${string}`, parseUnits(withdrawAmount, 6)],
-        });
-        txParams = {
-          to: TOKENS.USDC as `0x${string}`,
-          value: 0n,
-          data: transferData,
-        };
-      }
+      console.log(`[${withdrawToken}] Encoding transfer to:`, eoaAddress, 'amount:', amount.toString());
+      
+      const transferData = encodeFunctionData({
+        abi: erc20Abi,
+        functionName: 'transfer',
+        args: [eoaAddress as `0x${string}`, amount],
+      });
+      
+      console.log(`[${withdrawToken}] Encoded transfer data:`, transferData.substring(0, 66) + '...');
+      console.log(`[${withdrawToken}] Token contract:`, tokenAddress);
+      
+      const txParams = {
+        to: tokenAddress as `0x${string}`,
+        value: 0n,
+        data: transferData,
+      };
 
-      console.log(`[${withdrawToken}] TX Params:`, JSON.stringify({
+      console.log(`[${withdrawToken}] Final TX Params:`, JSON.stringify({
         to: txParams.to,
         value: txParams.value.toString(),
         dataLength: txParams.data.length,
-        data: txParams.data.substring(0, 50) + '...',
+        data: txParams.data,
       }, null, 2));
 
-      // Send using sendUserOperation with explicit calls array (more reliable than sendTransaction)
-      const userOpHash = await smartAccountClient.sendUserOperation({
-        calls: [{
-          to: txParams.to,
-          value: txParams.value,
-          data: txParams.data,
-        }],
-      });
-      
-      console.log(`[${withdrawToken}] UserOp hash:`, userOpHash);
-      
-      // Wait for transaction receipt
-      const receipt = await smartAccountClient.waitForUserOperationReceipt({ hash: userOpHash });
-      const txHash = receipt.receipt.transactionHash;
+      // Send transaction through smart account client (same as USDC)
+      const txHash = await smartAccountClient.sendTransaction(txParams);
       
       console.log('Withdrawal tx:', txHash);
       
