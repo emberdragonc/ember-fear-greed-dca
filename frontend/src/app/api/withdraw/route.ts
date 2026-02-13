@@ -15,6 +15,7 @@ import { createClient } from '@supabase/supabase-js';
 
 // Config
 const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as Address;
+const WETH = '0x4200000000000000000000000000000000000006' as Address;
 const DELEGATION_MANAGER = '0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3' as Address;
 
 // Lazy-loaded clients (initialized on first request to avoid build-time env issues)
@@ -150,9 +151,12 @@ export async function POST(request: NextRequest) {
     let executionValue = 0n;
 
     if (token === 'ETH') {
-      // For ETH: just send value to recipient
-      executionCallData = '0x' as Hex;
-      executionValue = BigInt(amount);
+      // For ETH (WETH): transfer ERC20 WETH to recipient
+      executionCallData = encodeFunctionData({
+  abi: erc20Abi,
+  functionName: 'transfer',
+  args: [recipientAddress as Address, BigInt(amount)],
+  });
     } else {
       // For USDC: call transfer on USDC contract
       executionCallData = encodeFunctionData({
@@ -162,7 +166,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const executionTarget = token === 'ETH' ? recipientAddress : USDC;
+    const executionTarget = token === 'ETH' ? WETH : USDC;
     const executionEncoded = encodeExecution(
       executionTarget as Address,
       executionValue,
