@@ -175,13 +175,47 @@ export function BalanceDisplay() {
       let txParams: { to: `0x${string}`; value: bigint; data: `0x${string}` };
       
       if (withdrawToken === 'WETH') {
-        // ETH: Transfer WETH to EOA (DCA buys WETH, not native ETH)
+        // WETH: Use API route for backend-controlled withdrawal (workaround for paymaster WETH restrictions)
+        try {
+          const response = await fetch('/api/withdraw', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              smartAccountAddress,
+              recipientAddress: eoaAddress,
+              userAddress: eoaAddress,
+              amount: parseEther(withdrawAmount).toString(),
+              token: 'ETH',
+            }),
+          });
+          
+          const result = await response.json();
+          if (!response.ok) {
+            throw new Error(result.error || 'API withdrawal failed');
+          }
+          
+          console.log('WETH withdrawal via API:', result.txHash);
+          alert('WETH withdrawal successful!');
+          setWithdrawAmount('');
+          setShowWithdraw(false);
+          setTimeout(() => {
+            refetchEth();
+            refetchWeth();
+            refetchUsdc();
+          }, 5000);
+          return; // Exit early since we handled it via API
+        } catch (apiError) {
+          console.error('API withdrawal failed, trying direct UserOp:', apiError);
+          // Fall through to try UserOperation method
+        }
+        
+        // Fallback: Direct WETH transfer (if API fails)
         const transferData = encodeFunctionData({
-  abi: erc20Abi,
-  functionName: 'transfer',
-  args: [eoaAddress as `0x${string}`, parseEther(withdrawAmount)],
-  });
-  txParams = {
+          abi: erc20Abi,
+          functionName: 'transfer',
+          args: [eoaAddress as `0x${string}`, parseEther(withdrawAmount)],
+        });
+        txParams = {
           to: WETH_ADDRESS as `0x${string}`,
           value: 0n,
           data: transferData,
