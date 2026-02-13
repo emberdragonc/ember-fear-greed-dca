@@ -207,7 +207,7 @@ export function BalanceDisplay() {
       }, null, 2));
 
       // Send transaction through smart account client (same as USDC)
-      const txHash = await smartAccountClient.sendTransaction(txParams);
+      const txHash = await smartAccountClient.sendTransaction(txParams as any);
       
       console.log('Withdrawal tx:', txHash);
       
