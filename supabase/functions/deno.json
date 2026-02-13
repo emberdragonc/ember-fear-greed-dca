@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "lib": ["deno.window", "dom"],
+    "strict": true
+  },
+  "tasks": {
+    "test": "deno test --allow-all",
+    "serve": "deno run --allow-all --watch ./dca-executor/index.ts"
+  },
+  "imports": {
+    "supabase": "https://esm.sh/@supabase/supabase-js@2",
+    "viem": "https://esm.sh/viem@2.21.45",
+    "viem/accounts": "https://esm.sh/viem@2.21.45/accounts",
+    "viem/chains": "https://esm.sh/viem@2.21.45/chains",
+    "permissionless": "https://esm.sh/permissionless@0.2.21",
+    "permissionless/accounts": "https://esm.sh/permissionless@0.2.21/accounts",
+    "permissionless/actions/pimlico": "https://esm.sh/permissionless@0.2.21/actions/pimlico"
+  }
+}
