@@ -139,7 +139,7 @@ export function BalanceDisplay() {
     console.log('🚀 WITHDRAW v2.2 - TypeScript fix, sendUserOperation');
     setIsWithdrawing(true);
   // Check if smart account has enough ETH for gas (in case paymaster fails)
-  const smartAccountEthBalance = await publicClient.getBalance({ address: smartAccountAddress });
+  const smartAccountEthBalance = await publicClient.getBalance({ address: smartAccountAddress as `0x${string}` });
   if (smartAccountEthBalance < parseEther('0.0001')) {
   alert('Your smart account needs a small amount of ETH for gas fees. Please deposit at least 0.0001 ETH to your smart account first.');
   setIsWithdrawing(false);
