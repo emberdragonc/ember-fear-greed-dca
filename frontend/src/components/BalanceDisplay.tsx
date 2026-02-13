@@ -153,10 +153,13 @@ export function BalanceDisplay() {
   }
 
     try {
+      console.log(`[${withdrawToken}] Starting withdrawal...`);
+      
       // Create Pimlico client for gas sponsorship
       const pimlicoClient = createPimlicoClient({
         transport: http(BUNDLER_URL),
       });
+      console.log(`[${withdrawToken}] Pimlico client created`);
 
       // Create smart account client with Pimlico paymaster (uses pm_sponsorUserOperation)
       const smartAccountClient = createSmartAccountClient({
@@ -170,6 +173,7 @@ export function BalanceDisplay() {
           },
         },
       });
+      console.log(`[${withdrawToken}] Smart account client created`);
 
       // Build the withdrawal transaction
       let txParams: { to: `0x${string}`; value: bigint; data: `0x${string}` };
