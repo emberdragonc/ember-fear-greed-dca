@@ -3,7 +3,8 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { useAccount, usePublicClient, useWalletClient } from 'wagmi';
-import { Implementation, toMetaMaskSmartAccount } from '@metamask/smart-accounts-kit';
+import { toSimpleSmartAccount } from 'permissionless/accounts';
+import { ENTRYPOINT_ADDRESS_V07 } from 'permissionless';
 
 type SmartAccountState =
   | { status: 'idle' }
@@ -84,14 +85,11 @@ export function SmartAccountProvider({ children }: { children: ReactNode }) {
     setState({ status: 'loading' });
 
     try {
-      // Create smart account with Hybrid implementation (EOA + passkey support)
-      // Use walletClient as signer (not walletClient.account) for proper signMessage support
-      const smartAccount = await toMetaMaskSmartAccount({
+      // Create Simple Smart Account (fully compatible with Permissionless + Pimlico)
+      const smartAccount = await toSimpleSmartAccount({
         client: publicClient as any,
-        implementation: Implementation.Hybrid,
-        deployParams: [eoaAddress, [], [], []],
-        deploySalt: '0x',
-        signer: { walletClient },
+        owner: walletClient as any,
+        entryPoint: ENTRYPOINT_ADDRESS_V07,
       });
 
       // Check if account is deployed by checking code
@@ -133,12 +131,10 @@ export function SmartAccountProvider({ children }: { children: ReactNode }) {
 
     try {
       // Recreate the smart account (address will be deterministic)
-      const smartAccount = await toMetaMaskSmartAccount({
+      const smartAccount = await toSimpleSmartAccount({
         client: publicClient as any,
-        implementation: Implementation.Hybrid,
-        deployParams: [eoaAddress, [], [], []],
-        deploySalt: '0x',
-        signer: { walletClient },
+        owner: walletClient as any,
+        entryPoint: ENTRYPOINT_ADDRESS_V07,
       });
 
       // Verify it matches the stored address
