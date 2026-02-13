@@ -134,7 +134,7 @@ export function BalanceDisplay() {
   const handleWithdraw = async () => {
     if (!smartAccountAddress || !eoaAddress || !withdrawAmount || !smartAccount || !publicClient) return;
 
-    console.log('🚀 WITHDRAW v2.0 - sendUserOperation fix');
+    console.log('🚀 WITHDRAW v2.1 - Force rebuild ' + Date.now());
     setIsWithdrawing(true);
   // Check if smart account has enough ETH for gas (in case paymaster fails)
   const smartAccountEthBalance = await publicClient.getBalance({ address: smartAccountAddress });
