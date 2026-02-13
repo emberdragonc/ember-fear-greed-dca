@@ -135,6 +135,14 @@ export function BalanceDisplay() {
     if (!smartAccountAddress || !eoaAddress || !withdrawAmount || !smartAccount || !publicClient) return;
 
     setIsWithdrawing(true);
+  // Check if smart account has enough ETH for gas (in case paymaster fails)
+  const smartAccountEthBalance = await publicClient.getBalance({ address: smartAccountAddress });
+  if (smartAccountEthBalance < parseEther('0.0001')) {
+  alert('Your smart account needs a small amount of ETH for gas fees. Please deposit at least 0.0001 ETH to your smart account first.');
+  setIsWithdrawing(false);
+  return;
+  }
+
     try {
       // Create Pimlico client for gas sponsorship
       const pimlicoClient = createPimlicoClient({
