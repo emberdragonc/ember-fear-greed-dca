@@ -46,11 +46,11 @@ export function BalanceDisplay() {
   const { data: walletClient } = useWalletClient();
   
   const [depositAmount, setDepositAmount] = useState('');
-  const [depositToken, setDepositToken] = useState<'ETH' | 'USDC'>('USDC');
+  const [depositToken, setDepositToken] = useState<'WETH' | 'USDC'>('USDC');
   const [showDeposit, setShowDeposit] = useState(false);
   
   const [withdrawAmount, setWithdrawAmount] = useState('');
-  const [withdrawToken, setWithdrawToken] = useState<'ETH' | 'USDC'>('USDC');
+  const [withdrawToken, setWithdrawToken] = useState<'WETH' | 'USDC'>('USDC');
   const [showWithdraw, setShowWithdraw] = useState(false);
   const [isWithdrawing, setIsWithdrawing] = useState(false);
 
@@ -302,11 +302,11 @@ export function BalanceDisplay() {
           <div className="flex gap-2 mb-2">
             <select
               value={depositToken}
-              onChange={(e) => setDepositToken(e.target.value as 'ETH' | 'USDC')}
+              onChange={(e) => setDepositToken(e.target.value as 'WETH' | 'USDC')}
               className="px-3 py-2 bg-black/30 border border-white/10 rounded-lg text-white text-sm"
             >
               <option value="USDC">USDC</option>
-              <option value="ETH">ETH</option>
+              <option value="WETH">WETH</option>
             </select>
             <input
               type="number"
@@ -333,11 +333,11 @@ export function BalanceDisplay() {
           <div className="flex gap-2 mb-2">
             <select
               value={withdrawToken}
-              onChange={(e) => setWithdrawToken(e.target.value as 'ETH' | 'USDC')}
+              onChange={(e) => setWithdrawToken(e.target.value as 'WETH' | 'USDC')}
               className="px-3 py-2 bg-black/30 border border-white/10 rounded-lg text-white text-sm"
             >
               <option value="USDC">USDC</option>
-              <option value="ETH">ETH</option>
+              <option value="WETH">WETH</option>
             </select>
             <input
               type="number"
