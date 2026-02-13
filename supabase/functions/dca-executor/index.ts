@@ -2,7 +2,7 @@
 // COMPLETE IMPLEMENTATION with UserOperation execution and fee collection
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'npm:@supabase/supabase-js@2'
 import { 
   createPublicClient, 
   createWalletClient, 
@@ -16,17 +16,17 @@ import {
   erc20Abi,
   type Address,
   type Hex,
-} from 'https://esm.sh/viem@2.21.45'
-import { base } from 'https://esm.sh/viem@2.21.45/chains'
-import { privateKeyToAccount } from 'https://esm.sh/viem@2.21.45/accounts'
+} from 'npm:viem@2.9.20'
+import { base } from 'npm:viem@2.9.20/chains'
+import { privateKeyToAccount } from 'npm:viem@2.9.20/accounts'
 import { 
   createSmartAccountClient, 
   ENTRYPOINT_ADDRESS_V07,
   type SmartAccount
-} from 'https://esm.sh/permissionless@0.2.21'
-import { signerToSimpleSmartAccount } from 'https://esm.sh/permissionless@0.2.21/accounts'
-import { pimlicoBundlerActions, pimlicoPaymasterActions } from 'https://esm.sh/permissionless@0.2.21/actions/pimlico'
-import { encodeNonce } from 'https://esm.sh/permissionless@0.2.21/utils'
+} from 'npm:permissionless@0.1.16'
+import { signerToSimpleSmartAccount } from 'npm:permissionless@0.1.16/accounts'
+import { pimlicoBundlerActions, pimlicoPaymasterActions } from 'npm:permissionless@0.1.16/actions/pimlico'
+import { encodeNonce } from 'npm:permissionless@0.1.16/utils'
 
 // ============ CONFIGURATION ============
 
@@ -54,7 +54,7 @@ const MIN_DELEGATION_VALUE_USD = 10
 const SLIPPAGE_SMALL_BPS = 50
 const SLIPPAGE_LARGE_BPS = 30
 const SLIPPAGE_THRESHOLD_USD = 100
-const MIN_SWAP_AMOUNT = parseUnits('0.10', 6)
+const MIN_SWAP_AMOUNT = 100000n // 0.10 USDC (6 decimals)
 const TRADING_API = 'https://trade-api.gateway.uniswap.org/v1'
 const EXPECTED_DELEGATE = '0xc472e866045d2e9ABd2F2459cE3BDB275b72C7e1'.toLowerCase()
 const OPTIMAL_BATCH_SIZE = 50
