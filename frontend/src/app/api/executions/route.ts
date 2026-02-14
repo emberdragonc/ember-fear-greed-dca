@@ -40,7 +40,7 @@ export async function GET(request: Request) {
       .select('id, user_address, fear_greed_index, action, amount_in, amount_out, fee_collected, tx_hash, status, created_at')
       .eq('user_address', userAddress.toLowerCase())
       .order('created_at', { ascending: false })
-      .limit(50);
+      .limit(500);
 
     if (error) {
       console.error('Failed to fetch executions:', error);
