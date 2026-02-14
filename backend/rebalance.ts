@@ -20,6 +20,7 @@ import {
   BATCH_DELAY_MS,
   sleep,
   validateSwapQuote,
+  permit2Abi,
   type DelegationRecord,
 } from './config';
 import { withRetry } from './error-handler';
@@ -35,6 +36,10 @@ import {
 import { validateDelegationCaveats, getActiveDelegations } from './delegation-validator';
 import { initBackendSmartAccount } from './smart-account';
 import { getSwapQuote, getETHPriceFromUniswap } from './swap-engine';
+import {
+  executeDelegatedERC20ApprovalViaUserOp,
+  executeDelegatedPermit2ApprovalViaUserOp,
+} from './approvals';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 
@@ -224,6 +229,91 @@ async function runRebalance() {
     return;
   }
 
+  // ============ PHASE 1.5: APPROVALS (WETH → Permit2 → Router) ============
+  console.log('\n--- PHASE 1.5: CHECK & FIX APPROVALS ---');
+
+  const APPROVAL_TIMESTAMP = BigInt(Date.now());
+
+  for (let idx = 0; idx < items.length; idx++) {
+    const item = items[idx];
+    const wallet = item.wallet;
+
+    // Check ERC20 approval: WETH → Permit2
+    const wethAllowance = await publicClient.readContract({
+      address: ADDRESSES.WETH,
+      abi: erc20Abi,
+      functionName: 'allowance',
+      args: [wallet, ADDRESSES.PERMIT2],
+    });
+    const needsERC20 = wethAllowance === 0n;
+
+    // Check Permit2 allowance: WETH via Permit2 → Router (with expiry)
+    let needsPermit2 = false;
+    try {
+      const result = await publicClient.readContract({
+        address: ADDRESSES.PERMIT2,
+        abi: permit2Abi,
+        functionName: 'allowance',
+        args: [wallet, ADDRESSES.WETH, ADDRESSES.UNISWAP_ROUTER],
+      });
+      const amount = BigInt(result[0]);
+      const expiration = Number(result[1]);
+      const now = Math.floor(Date.now() / 1000);
+      needsPermit2 = amount === 0n || expiration <= now;
+      if (needsPermit2) {
+        console.log(`  [${wallet.slice(0, 10)}] Permit2 expired (exp: ${expiration}, now: ${now})`);
+      }
+    } catch {
+      needsPermit2 = true;
+    }
+
+    if (!needsERC20 && !needsPermit2) {
+      console.log(`  [${wallet.slice(0, 10)}] Approvals OK ✓`);
+      continue;
+    }
+
+    if (DRY_RUN) {
+      console.log(`  [${wallet.slice(0, 10)}] Would fix: ERC20=${needsERC20}, Permit2=${needsPermit2}`);
+      continue;
+    }
+
+    const nonceKeyBase = APPROVAL_TIMESTAMP * 1000000n + BigInt(idx * 2);
+
+    if (needsERC20) {
+      console.log(`  [${wallet.slice(0, 10)}] Submitting WETH→Permit2 ERC20 approval...`);
+      const maxApproval = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
+      const txHash = await executeDelegatedERC20ApprovalViaUserOp(
+        item.delegation,
+        ADDRESSES.WETH,
+        ADDRESSES.PERMIT2,
+        maxApproval,
+        nonceKeyBase,
+      );
+      if (txHash) {
+        console.log(`  [${wallet.slice(0, 10)}] ✅ ERC20 approval: ${txHash}`);
+      } else {
+        console.error(`  [${wallet.slice(0, 10)}] ❌ ERC20 approval failed — wallet will likely fail swap`);
+      }
+    }
+
+    if (needsPermit2) {
+      console.log(`  [${wallet.slice(0, 10)}] Submitting Permit2 WETH→Router approval...`);
+      const txHash = await executeDelegatedPermit2ApprovalViaUserOp(
+        item.delegation,
+        ADDRESSES.WETH,
+        ADDRESSES.UNISWAP_ROUTER,
+        nonceKeyBase + 1n,
+      );
+      if (txHash) {
+        console.log(`  [${wallet.slice(0, 10)}] ✅ Permit2 approval: ${txHash}`);
+      } else {
+        console.error(`  [${wallet.slice(0, 10)}] ❌ Permit2 approval failed — wallet will likely fail swap`);
+      }
+    }
+  }
+
+  console.log('[Phase 1.5] Approvals complete\n');
+
   // ============ PHASE 2: EXECUTE ============
   console.log('\n--- PHASE 2: EXECUTE REBALANCE ---');
 
@@ -276,12 +366,8 @@ async function runRebalance() {
       continue;
     }
 
-    // Build UserOperations
-    const userOps: Array<{
-      item: RebalanceItem;
-      swapQuote: any;
-      userOp: any;
-    }> = [];
+    // Submit UserOperations (send directly — handles signing internally)
+    console.log(`[Submit] Sending ${quotedItems.length} swaps to bundler...`);
 
     for (const { item, swapQuote, nonceKey } of quotedItems) {
       try {
@@ -303,38 +389,16 @@ async function runRebalance() {
 
         const nonce = encodeNonce({ key: nonceKey, sequence: 0n });
 
-        const calls = [{
-          to: ADDRESSES.DELEGATION_MANAGER as Address,
-          data: redeemCalldata,
-          value: 0n,
-        }];
-
-        const userOp = await bundlerClient.prepareUserOperation({
+        const hash = await bundlerClient.sendUserOperation({
           account: backendSmartAccount,
           nonce,
-          calls,
+          calls: [{
+            to: ADDRESSES.DELEGATION_MANAGER as Address,
+            data: redeemCalldata,
+            value: 0n,
+          }],
           paymaster: pimlicoPaymasterClient,
         });
-
-        userOps.push({ item, swapQuote, userOp });
-        console.log(`[UserOp] ✅ ${item.wallet}: UserOp built`);
-      } catch (error: any) {
-        console.error(`[UserOp] ❌ ${item.wallet}: ${error.message}`);
-        failCount++;
-      }
-    }
-
-    if (userOps.length === 0) {
-      console.log(`[Batch ${batchNum}] No valid UserOps - skipping`);
-      continue;
-    }
-
-    // Submit UserOperations
-    console.log(`[Submit] Sending ${userOps.length} UserOps to bundler...`);
-
-    for (const { item, swapQuote, userOp } of userOps) {
-      try {
-        const hash = await bundlerClient.sendUserOperation(userOp);
         console.log(`[Submit] ✅ ${item.wallet}: UserOp hash ${hash}`);
 
         // Wait for receipt
