@@ -19,13 +19,32 @@ import {
   type WalletData,
 } from './config';
 import { withRetry } from './error-handler';
-import { backendAccount, getETHBalance } from './clients';
+import { backendAccount, getETHBalance, supabase } from './clients';
 import { validateDelegationCaveats, getActiveDelegations } from './delegation-validator';
 import { initBackendSmartAccount, deployUndeployedAccounts } from './smart-account';
 import { processApprovals } from './approvals';
 import { processSwapsParallel, retrySwapWithOriginalAmounts, runDryRunSimulation } from './swap-engine';
 import { logExecution, updateProtocolStats } from './db-logger';
 import type { ExecutionResult } from './config';
+
+// ============ IDEMPOTENCY GUARD ============
+
+async function hasAlreadyExecutedToday(): Promise<boolean> {
+  const today = new Date().toISOString().split('T')[0];
+  const { data, error } = await supabase
+    .from('dca_executions')
+    .select('id')
+    .gte('created_at', `${today}T00:00:00`)
+    .limit(1);
+  
+  if (error) {
+    console.error('[Idempotency] Failed to check today\'s executions:', error.message);
+    // Fail CLOSED - if we can't check, don't execute (safer than risking duplicates)
+    return true;
+  }
+  
+  return (data?.length ?? 0) > 0;
+}
 
 // ============ FEAR & GREED ============
 
@@ -86,6 +105,21 @@ async function runDCA() {
   console.log('========================================');
   console.log(`Time: ${new Date().toISOString()}`);
   console.log(`Backend EOA: ${backendAccount.address}`);
+
+  // ============ IDEMPOTENCY CHECK ============
+  // Prevents duplicate executions if cron fires multiple times
+  if (!DRY_RUN) {
+    const alreadyRan = await hasAlreadyExecutedToday();
+    if (alreadyRan) {
+      console.log('\n⚠️  IDEMPOTENCY GUARD: DCA already executed today. Skipping.');
+      console.log('    This prevents duplicate swaps if the cron job fires multiple times.');
+      console.log('    To force execution, use: npx tsx backend/dca-executor.ts --force');
+      if (!process.argv.includes('--force')) {
+        return;
+      }
+      console.log('    --force flag detected, proceeding anyway...');
+    }
+  }
 
   // Initialize backend smart account
   const backendSmartAccount = await initBackendSmartAccount();

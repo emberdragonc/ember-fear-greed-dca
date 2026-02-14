@@ -8,13 +8,14 @@ import { useAccount } from 'wagmi';
 interface Execution {
   id: string;
   timestamp: string;
-  action: 'buy' | 'sell' | 'hold';
+  action: 'buy' | 'sell' | 'hold' | 'rebalance';
   amount_in: string;
   amount_out: string | null;
   fear_greed_index: number;
   tx_hash: string | null;
   status: 'pending' | 'success' | 'failed';
   error_message: string | null;
+  fee_collected: string | null;
 }
 
 export function TransactionHistory() {
@@ -65,14 +66,21 @@ export function TransactionHistory() {
   // Helper to format swap - shows both sides
   const formatSwap = (exec: Execution) => {
     const isBuy = exec.action === 'buy';
-    // Input: USDC (6 decimals) for buy, ETH (18 decimals) for sell
-    const inDecimals = isBuy ? 6 : 18;
-    const outDecimals = isBuy ? 18 : 6;
+    const isRebalance = exec.action === 'rebalance';
+    
+    // Rebalance: ETH (18 decimals) → USDC (6 decimals) — same as sell
+    // Buy: USDC (6 decimals) → ETH (18 decimals)
+    // Sell: ETH (18 decimals) → USDC (6 decimals)
+    const inDecimals = (isBuy && !isRebalance) ? 6 : 18;
+    const outDecimals = (isBuy && !isRebalance) ? 18 : 6;
+    const inSymbol = (isBuy && !isRebalance) ? 'USDC' : 'ETH';
+    const outSymbol = (isBuy && !isRebalance) ? 'ETH' : 'USDC';
+    
     const inAmount = parseFloat(exec.amount_in) / Math.pow(10, inDecimals);
     const outAmount = exec.amount_out ? parseFloat(exec.amount_out) / Math.pow(10, outDecimals) : null;
     
-    const inStr = `${inAmount.toFixed(isBuy ? 2 : 6)} ${isBuy ? 'USDC' : 'ETH'}`;
-    const outStr = outAmount ? `${outAmount.toFixed(isBuy ? 6 : 2)} ${isBuy ? 'ETH' : 'USDC'}` : '...';
+    const inStr = `${inAmount.toFixed(inDecimals === 6 ? 2 : 6)} ${inSymbol}`;
+    const outStr = outAmount ? `${outAmount.toFixed(outDecimals === 6 ? 2 : 6)} ${outSymbol}` : '...';
     
     return { inStr, outStr };
   };
@@ -116,7 +124,9 @@ export function TransactionHistory() {
             <div 
               key={exec.id}
               className={`flex items-center justify-between p-3 rounded-xl border ${
-                exec.status === 'success'
+                exec.action === 'rebalance'
+                  ? 'bg-amber-500/5 border-amber-500/20'
+                  : exec.status === 'success'
                   ? 'bg-white/5 border-white/5'
                   : exec.status === 'failed'
                   ? 'bg-red-500/10 border-red-500/20'
@@ -125,16 +135,27 @@ export function TransactionHistory() {
             >
               <div className="flex items-center gap-3">
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                  exec.action === 'buy' 
+                  exec.action === 'rebalance'
+                    ? 'bg-amber-500/20 text-amber-400'
+                    : exec.action === 'buy' 
                     ? 'bg-emerald-500/20 text-emerald-400' 
                     : exec.action === 'sell'
                     ? 'bg-red-500/20 text-red-400'
                     : 'bg-gray-500/20 text-gray-400'
                 }`}>
-                  {exec.action === 'buy' ? '↓' : exec.action === 'sell' ? '↑' : '—'}
+                  {exec.action === 'rebalance' ? '⟲' : exec.action === 'buy' ? '↓' : exec.action === 'sell' ? '↑' : '—'}
                 </div>
                 <div>
-                  {exec.action !== 'hold' ? (
+                  {exec.action === 'rebalance' ? (
+                    <>
+                      <p className="font-medium text-white text-sm">
+                        Correction: {formatSwap(exec).inStr} → {formatSwap(exec).outStr}
+                      </p>
+                      <p className="text-xs text-amber-400">
+                        Manual correction · No fee
+                      </p>
+                    </>
+                  ) : exec.action !== 'hold' ? (
                     <>
                       <p className="font-medium text-white text-sm">
                         {exec.action === 'buy' ? 'Buy' : 'Sell'}: {formatSwap(exec).inStr} → {formatSwap(exec).outStr}
@@ -143,9 +164,11 @@ export function TransactionHistory() {
                   ) : (
                     <p className="font-medium text-white text-sm">Hold (no action)</p>
                   )}
-                  <p className="text-xs text-gray-500">
-                    F&G: {exec.fear_greed_index} ({getFGClassification(exec.fear_greed_index)})
-                  </p>
+                  {exec.action !== 'rebalance' && (
+                    <p className="text-xs text-gray-500">
+                      F&G: {exec.fear_greed_index} ({getFGClassification(exec.fear_greed_index)})
+                    </p>
+                  )}
                   {exec.status === 'failed' && exec.error_message && (
                     <p className="text-xs text-red-400 mt-1 truncate max-w-[200px]" title={exec.error_message}>
                       {exec.error_message}
