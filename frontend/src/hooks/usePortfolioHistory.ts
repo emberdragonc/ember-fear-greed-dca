@@ -26,7 +26,7 @@ export interface APYData {
 interface Execution {
   id: string;
   timestamp: string;
-  action: 'buy' | 'sell' | 'hold';
+  action: 'buy' | 'sell' | 'hold' | 'rebalance';
   amount_in: string;
   amount_out: string | null;
   fear_greed_index: number;
@@ -66,9 +66,9 @@ function calculatePortfolioHistory(
   executions: Execution[],
   currentEthPrice: number
 ): { history: PortfolioDataPoint[]; apyData: APYData } {
-  // Filter successful buy/sell executions (not hold)
+  // Filter successful buy/sell executions (not hold, not rebalance)
   const successfulSwaps = executions
-    .filter(e => e.status === 'success' && e.action !== 'hold')
+    .filter(e => e.status === 'success' && (e.action === 'buy' || e.action === 'sell'))
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
   if (successfulSwaps.length === 0) {
