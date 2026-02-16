@@ -16,6 +16,7 @@ import {
   CHAIN_ID,
   TRADING_API,
   ADDRESSES,
+  ALCHEMY_RPC,
   SLIPPAGE_LARGE_BPS,
   MIN_DELEGATION_VALUE_USD,
   MIN_WALLET_VALUE_USD,
@@ -162,7 +163,6 @@ async function simulateSwap(
   tokenOut: Address
 ): Promise<{ success: boolean; reason?: string }> {
   try {
-    const ALCHEMY_RPC = 'https://base-mainnet.g.alchemy.com/v2/NQlmwdn5GImg3XWpPUNp4';
     const response = await fetch(ALCHEMY_RPC, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

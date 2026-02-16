@@ -61,7 +61,8 @@ const erc20Abi = [{
 }] as const;
 
 // RPC Configuration - Alchemy primary, public fallback
-const ALCHEMY_RPC = 'https://base-mainnet.g.alchemy.com/v2/NQlmwdn5GImg3XWpPUNp4';
+const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY || process.env.NEXT_PUBLIC_ALCHEMY_API_KEY;
+const ALCHEMY_RPC = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
 const FALLBACK_RPC = 'https://mainnet.base.org';
 
 // Lazy-loaded clients

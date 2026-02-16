@@ -1,9 +1,12 @@
 const { createPublicClient, http, encodeFunctionData, parseEther } = require('viem');
 const { base } = require('viem/chains');
 
+const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY || 'x5MuWm4EVQXfcx9l_xItF';
+const ALCHEMY_RPC = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
+
 const client = createPublicClient({
   chain: base,
-  transport: http('https://base-mainnet.g.alchemy.com/v2/NQlmwdn5GImg3XWpPUNp4'),
+  transport: http(ALCHEMY_RPC),
 });
 
 const WETH_ADDRESS = '0x4200000000000000000000000000000000000006';
@@ -58,7 +61,7 @@ async function simulateWethTransfer() {
   
   // Simulate via Alchemy
   try {
-    const response = await fetch('https://base-mainnet.g.alchemy.com/v2/NQlmwdn5GImg3XWpPUNp4', {
+    const response = await fetch(ALCHEMY_RPC, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

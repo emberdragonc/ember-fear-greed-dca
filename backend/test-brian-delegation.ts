@@ -9,7 +9,8 @@ import { createBundlerClient } from 'viem/account-abstraction';
 import { encodeNonce } from 'permissionless/utils';
 import { createPimlicoClient } from 'permissionless/clients/pimlico';
 
-const ALCHEMY_RPC = 'https://base-mainnet.g.alchemy.com/v2/NQlmwdn5GImg3XWpPUNp4';
+const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
+const ALCHEMY_RPC = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
 const PIMLICO_URL = 'https://api.pimlico.io/v2/8453/rpc?apikey=pim_UQJHzByj343893oNtPGJfq';
 
 const ADDRESSES = {
