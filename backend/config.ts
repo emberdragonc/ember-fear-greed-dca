@@ -7,7 +7,8 @@ export const CHAIN_ID = 8453;
 export const TRADING_API = 'https://trade-api.gateway.uniswap.org/v1';
 
 // Alchemy RPC for reliable read operations (balance checks, quote fetching)
-export const ALCHEMY_RPC = 'https://base-mainnet.g.alchemy.com/v2/NQlmwdn5GImg3XWpPUNp4';
+export const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
+export const ALCHEMY_RPC = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
 
 // Pimlico bundler for ERC-4337 UserOperations
 export const PIMLICO_API_KEY = process.env.PIMLICO_API_KEY;
