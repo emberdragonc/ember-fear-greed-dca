@@ -174,7 +174,6 @@ export function useDelegation(): UseDelegationReturn {
           },
           maxAmountPerSwap: DELEGATION_CONFIG.MAX_SWAP_AMOUNT_USDC.toString(),
           expiresAt: delegation.expiresAt,
-          targetAsset: targetAsset || 'ETH',
         }),
       });
 
@@ -182,6 +181,7 @@ export function useDelegation(): UseDelegationReturn {
       
       if (!response.ok) {
         console.error('Failed to save delegation to DB:', result.error);
+        setState(prev => ({ ...prev, error: 'Failed to save: ' + result.error }));
       } else {
         console.log('Delegation saved to database');
       }
