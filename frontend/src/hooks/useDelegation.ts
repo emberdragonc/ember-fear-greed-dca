@@ -63,7 +63,38 @@ export function useDelegation(): UseDelegationReturn {
     const checkDelegation = async () => {
       // First check localStorage
       const stored = loadDelegation();
+      
+      // Verify localStorage delegation exists in Supabase
       if (stored && stored.delegator.toLowerCase() === address.toLowerCase()) {
+        // Verify against Supabase BEFORE trusting localStorage
+        try {
+          const response = await fetch(`/api/delegation?userAddress=${address}`);
+          const result = await response.json();
+          
+          if (!result.exists) {
+            // localStorage has stale data - clear it and show no delegation
+            console.warn('Delegation in localStorage but not in Supabase - clearing stale data');
+            clearDelegation();
+            setState({
+              status: 'idle',
+              error: 'Previous delegation not found in database - please re-setup',
+              delegation: null,
+              signedDelegation: null,
+            });
+            return;
+          }
+        } catch (err) {
+          console.error('Failed to verify delegation in DB:', err);
+          // If DB check fails, be conservative and show error
+          setState({
+            status: 'idle',
+            error: 'Failed to verify delegation - please re-setup',
+            delegation: null,
+            signedDelegation: null,
+          });
+          return;
+        }
+        
         // Check if expired
         if (isDelegationExpired(stored.caveats.expiry)) {
           setState({
