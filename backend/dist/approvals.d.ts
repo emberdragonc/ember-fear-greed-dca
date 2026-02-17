@@ -1,0 +1,10 @@
+import { type Address } from 'viem';
+import { type DelegationRecord, type ApprovalTask, type ApprovalResult } from './config';
+export declare function checkUSDCApproval(smartAccountAddress: Address): Promise<boolean>;
+export declare function checkPermit2Allowance(smartAccountAddress: Address): Promise<boolean>;
+export declare function executeDelegatedERC20ApprovalViaUserOp(delegation: DelegationRecord, tokenAddress: Address, spenderAddress: Address, amount: bigint, nonceKey: bigint): Promise<string | null>;
+export declare function executeDelegatedPermit2ApprovalViaUserOp(delegation: DelegationRecord, tokenAddress: Address, spenderAddress: Address, nonceKey: bigint): Promise<string | null>;
+export declare function executeDelegatedERC20Approval(delegation: DelegationRecord, tokenAddress: Address, spenderAddress: Address, amount: bigint): Promise<string | null>;
+export declare function executeDelegatedPermit2Approval(delegation: DelegationRecord, tokenAddress: Address, spenderAddress: Address): Promise<string | null>;
+export declare function submitApprovalUserOps(task: ApprovalTask, tokenIn: Address, nonceKeyBase: bigint): Promise<ApprovalResult>;
+export declare function processApprovals(delegations: DelegationRecord[], isBuy: boolean): Promise<void>;

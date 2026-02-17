@@ -155,8 +155,7 @@ export function useDelegation(): UseDelegationReturn {
   const saveDelegationToDb = async (
     delegation: StoredDelegation, 
     signedDelegation: any,
-    smartAccountAddr?: string,
-    targetAsset?: string
+    smartAccountAddr?: string
   ) => {
     try {
       const response = await fetch('/api/delegation', {
@@ -341,7 +340,7 @@ export function useDelegation(): UseDelegationReturn {
       saveDelegation(delegationData);
       
       // Save to Supabase for backend access (include signed delegation for redemption)
-      await saveDelegationToDb(delegationData, signedDelegation, smartAccountAddr, targetAsset);
+      await saveDelegationToDb(delegationData, signedDelegation, smartAccountAddr);
 
       setState({
         status: 'signed',
