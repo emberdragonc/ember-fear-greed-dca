@@ -53,6 +53,8 @@ export function BalanceDisplay() {
   const [withdrawToken, setWithdrawToken] = useState<'WETH' | 'USDC'>('USDC');
   const [showWithdraw, setShowWithdraw] = useState(false);
   const [isWithdrawing, setIsWithdrawing] = useState(false);
+  const [withdrawError, setWithdrawError] = useState<string | null>(null);
+  const [withdrawSuccess, setWithdrawSuccess] = useState(false);
 
   const { sendTransaction, isPending: isSendingEth } = useSendTransaction();
   const { writeContract, isPending: isSendingUsdc } = useWriteContract();
@@ -135,31 +137,25 @@ export function BalanceDisplay() {
 
   const handleWithdraw = async () => {
     if (!smartAccountAddress || !eoaAddress || !withdrawAmount || !publicClient) {
-      alert('Please connect your wallet and enter a withdrawal amount.');
+      setWithdrawError('Please connect your wallet and enter a withdrawal amount.'); return;
       return;
     }
     if (!smartAccount) {
       // Smart account not initialized — common on mobile wallets via WalletConnect
       // Try to re-initialize before giving up
-      alert('Smart account not ready. Please disconnect and reconnect your wallet, then try again. If using a mobile wallet via WalletConnect, make sure you\'re on the Base network.');
+      setWithdrawError('Smart account not ready. Please disconnect and reconnect your wallet.'); return;
       return;
     }
 
     console.log('🚀 WITHDRAW v3.0 - Detailed transfer encoding debug');
     setIsWithdrawing(true);
-  // Check if smart account has enough ETH for gas (in case paymaster fails)
-  const smartAccountEthBalance = await publicClient.getBalance({ address: smartAccountAddress as `0x${string}` });
-  if (smartAccountEthBalance < parseEther('0.0001')) {
-  alert('Your smart account needs a small amount of ETH for gas fees. Please deposit at least 0.0001 ETH to your smart account first.');
-  setIsWithdrawing(false);
-  return;
-  }
+  // Note: No ETH gas check needed — Pimlico paymaster sponsors gas for all transactions
 
   // Check sufficient balance for the token
   const withdrawAmountBigInt = withdrawToken === 'WETH' ? parseEther(withdrawAmount) : parseUnits(withdrawAmount, 6);
   const currentBalance = withdrawToken === 'WETH' ? (wethBalanceRaw as bigint) : (usdcBalanceRaw as bigint);
   if (withdrawAmountBigInt > currentBalance) {
-  alert(`Insufficient ${withdrawToken === 'WETH' ? 'WETH' : withdrawToken} balance in smart account.`);
+  setWithdrawError(`Insufficient ${withdrawToken === 'WETH' ? 'WETH' : withdrawToken} balance.`);
   setIsWithdrawing(false);
   return;
   }
@@ -229,7 +225,7 @@ export function BalanceDisplay() {
         refetchUsdc();
       }, 5000);
       
-      alert('Withdrawal successful!');
+      setWithdrawSuccess(true); setWithdrawError(null);
     } catch (error) {
       console.error('Withdraw failed - FULL ERROR:', error);
       console.error('Error details:', {
@@ -256,7 +252,7 @@ export function BalanceDisplay() {
           errorMsg = `Withdrawal failed: ${error.message.substring(0, 100)}`;
         }
       }
-      alert(errorMsg);
+      setWithdrawError(errorMsg);
     } finally {
       setIsWithdrawing(false);
     }
@@ -285,7 +281,7 @@ export function BalanceDisplay() {
             {showDeposit ? 'Cancel' : '+ Deposit'}
           </button>
           <button
-            onClick={() => { setShowWithdraw(!showWithdraw); setShowDeposit(false); }}
+            onClick={() => { setShowWithdraw(!showWithdraw); setShowDeposit(false); setWithdrawError(null); setWithdrawSuccess(false); }}
             className={`text-xs font-medium ${showWithdraw ? 'text-gray-400' : 'text-orange-400 hover:text-orange-300'}`}
           >
             {showWithdraw ? 'Cancel' : '↑ Withdraw'}
@@ -353,9 +349,15 @@ export function BalanceDisplay() {
               Max
             </button>
           </div>
+          {withdrawError && (
+            <p className="text-xs text-red-400 mb-2 text-center px-1">{withdrawError}</p>
+          )}
+          {withdrawSuccess && (
+            <p className="text-xs text-green-400 mb-2 text-center">✅ Withdrawal successful!</p>
+          )}
           {!smartAccount && smartAccountAddress && (
             <p className="text-xs text-yellow-400 mb-2 text-center">
-              ⚠️ Smart account not ready. Disconnect and reconnect your wallet to fix.
+              ⚠️ Smart account not ready. Disconnect and reconnect your wallet.
             </p>
           )}
           <button
