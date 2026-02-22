@@ -150,7 +150,14 @@ export function TotalBalanceCard() {
   };
 
   const handleWithdraw = async () => {
-    if (!smartAccountAddress || !eoaAddress || !withdrawAmount || !smartAccount || !publicClient) return;
+    if (!smartAccountAddress || !eoaAddress || !withdrawAmount || !publicClient) {
+      alert('Please connect your wallet and enter a withdrawal amount.');
+      return;
+    }
+    if (!smartAccount) {
+      alert('Smart account not ready. Please disconnect and reconnect your wallet, then try again. If using a mobile wallet via WalletConnect, make sure you\'re on the Base network.');
+      return;
+    }
     setIsWithdrawing(true);
     try {
       const pimlicoClient = createPimlicoClient({
@@ -291,9 +298,14 @@ export function TotalBalanceCard() {
               Max
             </button>
           </div>
+          {!smartAccount && smartAccountAddress && (
+            <p className="text-xs text-yellow-400 mb-2 text-center">
+              ⚠️ Smart account not ready. Disconnect and reconnect your wallet to fix.
+            </p>
+          )}
           <button
             onClick={handleWithdraw}
-            disabled={isWithdrawing || !withdrawAmount}
+            disabled={isWithdrawing || !withdrawAmount || !smartAccount}
             className="w-full px-3 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors"
           >
             {isWithdrawing ? 'Processing...' : `Withdraw ${withdrawToken}`}

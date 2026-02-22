@@ -134,7 +134,16 @@ export function BalanceDisplay() {
   };
 
   const handleWithdraw = async () => {
-    if (!smartAccountAddress || !eoaAddress || !withdrawAmount || !smartAccount || !publicClient) return;
+    if (!smartAccountAddress || !eoaAddress || !withdrawAmount || !publicClient) {
+      alert('Please connect your wallet and enter a withdrawal amount.');
+      return;
+    }
+    if (!smartAccount) {
+      // Smart account not initialized — common on mobile wallets via WalletConnect
+      // Try to re-initialize before giving up
+      alert('Smart account not ready. Please disconnect and reconnect your wallet, then try again. If using a mobile wallet via WalletConnect, make sure you\'re on the Base network.');
+      return;
+    }
 
     console.log('🚀 WITHDRAW v3.0 - Detailed transfer encoding debug');
     setIsWithdrawing(true);
@@ -344,12 +353,17 @@ export function BalanceDisplay() {
               Max
             </button>
           </div>
+          {!smartAccount && smartAccountAddress && (
+            <p className="text-xs text-yellow-400 mb-2 text-center">
+              ⚠️ Smart account not ready. Disconnect and reconnect your wallet to fix.
+            </p>
+          )}
           <button
             onClick={handleWithdraw}
-            disabled={isWithdrawing || !withdrawAmount}
+            disabled={isWithdrawing || !withdrawAmount || !smartAccount}
             className="w-full px-3 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors"
           >
-            {isWithdrawing ? 'Processing...' : `Withdraw ${withdrawToken}`}
+            {isWithdrawing ? 'Processing...' : !smartAccount ? 'Wallet Not Ready' : `Withdraw ${withdrawToken}`}
           </button>
         </div>
       )}
