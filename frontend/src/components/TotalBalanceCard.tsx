@@ -6,10 +6,17 @@ import { base } from 'wagmi/chains';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { useEthPrice } from '@/hooks/useEthPrice';
 import { TOKENS } from '@/lib/swap';
-import { formatUnits, parseUnits, parseEther } from 'viem';
+import { formatUnits, parseUnits, parseEther, encodeFunctionData, http } from 'viem';
+import { entryPoint07Address } from 'viem/account-abstraction';
+import { createSmartAccountClient } from 'permissionless';
+import { createPimlicoClient } from 'permissionless/clients/pimlico';
 
 // WETH address on Base
 const WETH_ADDRESS = '0x4200000000000000000000000000000000000006' as const;
+
+// Pimlico bundler URL — gas is sponsored, no wallet ETH needed
+const PIMLICO_API_KEY = process.env.NEXT_PUBLIC_PIMLICO_API_KEY || '';
+const BUNDLER_URL = `https://api.pimlico.io/v2/8453/rpc?apikey=${PIMLICO_API_KEY}`;
 
 // ERC20 ABI
 const erc20Abi = [
@@ -145,12 +152,12 @@ export function TotalBalanceCard() {
   };
 
   const handleWithdraw = async () => {
-    if (!smartAccountAddress || !eoaAddress || !withdrawAmount) {
+    if (!smartAccountAddress || !eoaAddress || !withdrawAmount || !publicClient) {
       setWithdrawError('Please connect your wallet and enter a withdrawal amount.');
       return;
     }
 
-    // Validate balance before submitting
+    // Validate balance before hitting the wallet
     const withdrawAmountBigInt = withdrawToken === 'WETH'
       ? parseEther(withdrawAmount)
       : parseUnits(withdrawAmount, 6);
@@ -162,26 +169,49 @@ export function TotalBalanceCard() {
       return;
     }
 
+    let account = smartAccount;
+    if (!account) {
+      setIsWithdrawing(true);
+      try { account = await createSmartAccount(); } catch (e) { /* fall through */ }
+      if (!account) {
+        setWithdrawError('Could not initialize smart account. Please disconnect and reconnect your wallet.');
+        setIsWithdrawing(false);
+        return;
+      }
+    }
+
     setIsWithdrawing(true);
     setWithdrawError(null);
     try {
-      const response = await fetch('/api/withdraw', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          smartAccountAddress,
-          recipientAddress: eoaAddress,
-          userAddress: eoaAddress,
-          amount: withdrawAmountBigInt.toString(),
-          token: withdrawToken, // 'WETH' or 'USDC'
-        }),
+      const pimlicoClient = createPimlicoClient({
+        transport: http(BUNDLER_URL),
+        entryPoint: { address: entryPoint07Address, version: '0.7' },
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        setWithdrawError(data.error || 'Withdrawal failed');
-        return;
-      }
+      const smartAccountClient = createSmartAccountClient({
+        account: account as any,
+        chain: base,
+        bundlerTransport: http(BUNDLER_URL),
+        paymaster: pimlicoClient,
+        userOperation: {
+          estimateFeesPerGas: async () => (await pimlicoClient.getUserOperationGasPrice()).fast,
+        },
+      });
+
+      const tokenAddress = withdrawToken === 'WETH' ? WETH_ADDRESS : TOKENS.USDC;
+      const amount = withdrawToken === 'WETH' ? parseEther(withdrawAmount) : parseUnits(withdrawAmount, 6);
+
+      const transferData = encodeFunctionData({
+        abi: erc20Abi,
+        functionName: 'transfer',
+        args: [eoaAddress as `0x${string}`, amount],
+      });
+
+      await smartAccountClient.sendTransaction({
+        to: tokenAddress as `0x${string}`,
+        value: 0n,
+        data: transferData,
+      } as any);
 
       setWithdrawAmount('');
       setShowWithdraw(false);
@@ -189,7 +219,14 @@ export function TotalBalanceCard() {
       setWithdrawSuccess(true);
     } catch (error) {
       console.error('Withdraw failed:', error);
-      setWithdrawError(error instanceof Error ? error.message.substring(0, 120) : 'Withdrawal failed');
+      let errorMsg = 'Withdrawal failed';
+      if (error instanceof Error) {
+        errorMsg = error.message.replace(/https?:\/\/[^\s]+/g, '[URL]');
+        if (error.message.includes('User rejected') || error.message.includes('user rejected')) errorMsg = 'Transaction cancelled.';
+        else if (error.message.includes('paymaster')) errorMsg = 'Gas sponsorship failed. Try again.';
+        else errorMsg = error.message.substring(0, 120);
+      }
+      setWithdrawError(errorMsg);
     } finally {
       setIsWithdrawing(false);
     }

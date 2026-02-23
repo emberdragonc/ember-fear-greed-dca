@@ -1,16 +1,41 @@
 // wagmi.ts - Wagmi configuration for Fear & Greed DCA using RainbowKit
 import { connectorsForWallets } from '@rainbow-me/rainbowkit';
+import type { Wallet } from '@rainbow-me/rainbowkit';
 import {
   rainbowWallet,
   walletConnectWallet,
   metaMaskWallet,
-  coinbaseWallet,
   injectedWallet,
   rabbyWallet,
   phantomWallet,
 } from '@rainbow-me/rainbowkit/wallets';
+import { coinbaseWallet as wagmiCoinbaseWallet } from '@wagmi/connectors';
 import { createConfig, http } from 'wagmi';
 import { base, baseSepolia } from 'wagmi/chains';
+
+// Coinbase Wallet in EOA-only mode — prevents smart wallet simulation which breaks
+// MetaMask smart account UserOp signing on mobile (Coinbase Wallet's simulation
+// engine rejects eth_signTypedData_v4 for MetaMask smart accounts).
+const coinbaseEOAWallet = (): Wallet => ({
+  id: 'coinbase-eoa',
+  name: 'Coinbase Wallet',
+  iconUrl: async () => 'https://assets.coingecko.com/markets/images/23/small/Coinbase_Wallet_Symbol.png',
+  iconBackground: '#0051FF',
+  downloadUrls: {
+    android: 'https://play.google.com/store/apps/details?id=org.toshi',
+    ios: 'https://apps.apple.com/us/app/coinbase-wallet-nfts-crypto/id1278383455',
+    mobile: 'https://go.cb-w.com/mtUeDhpZum',
+    qrCode: 'https://go.cb-w.com/mtUeDhpZum',
+  },
+  mobile: {
+    getUri: (uri: string) => `cbwallet://dapp?url=${encodeURIComponent(uri)}`,
+  },
+  createConnector: () =>
+    wagmiCoinbaseWallet({
+      appName: 'Fear & Greed DCA',
+      preference: { options: 'eoaOnly' },
+    }),
+});
 
 // Use Base Sepolia for testing, Base mainnet for production
 const chainId = parseInt(process.env.NEXT_PUBLIC_CHAIN_ID || '8453');
@@ -34,7 +59,7 @@ const connectors = connectorsForWallets(
       groupName: 'Popular',
       wallets: [
         metaMaskWallet,
-        coinbaseWallet,
+        coinbaseEOAWallet,
         rabbyWallet,
         phantomWallet,
         rainbowWallet,
