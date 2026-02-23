@@ -61,6 +61,8 @@ export function TotalBalanceCard() {
   const [withdrawToken, setWithdrawToken] = useState<'WETH' | 'USDC'>('USDC');
   const [showWithdraw, setShowWithdraw] = useState(false);
   const [isWithdrawing, setIsWithdrawing] = useState(false);
+  const [withdrawError, setWithdrawError] = useState<string | null>(null);
+  const [withdrawSuccess, setWithdrawSuccess] = useState(false);
 
   const { sendTransaction, isPending: isSendingEth } = useSendTransaction();
   const { writeContract, isPending: isSendingUsdc } = useWriteContract();
@@ -161,7 +163,7 @@ export function TotalBalanceCard() {
         account = await createSmartAccount();
       } catch (e) { /* fall through */ }
       if (!account) {
-        alert('Could not initialize smart account. Please disconnect and reconnect your wallet.');
+        setWithdrawError('Could not initialize smart account. Please disconnect and reconnect your wallet.');
         setIsWithdrawing(false);
         return;
       }
@@ -203,10 +205,19 @@ export function TotalBalanceCard() {
       setWithdrawAmount('');
       setShowWithdraw(false);
       refetchAll();
-      alert('Withdrawal successful!');
+      setWithdrawSuccess(true); setWithdrawError(null);
     } catch (error) {
       console.error('Withdraw failed:', error);
-      alert('Withdrawal failed');
+      let errorMsg = 'Withdrawal failed';
+      if (error instanceof Error) {
+        errorMsg = error.message.replace(/https?:\/\/[^\s]+/g, '[URL]');
+        if (error.message.includes('insufficient funds')) errorMsg = 'Insufficient ETH for gas. Deposit some ETH to your smart account.';
+        else if (error.message.includes('User rejected') || error.message.includes('user rejected')) errorMsg = 'Transaction rejected by wallet.';
+        else if (error.message.includes('paymaster')) errorMsg = 'Paymaster error — gas sponsorship failed. Try again.';
+        else if (error.message.includes('bundler')) errorMsg = 'Bundler error — try again in a moment.';
+        else errorMsg = error.message.substring(0, 120);
+      }
+      setWithdrawError(errorMsg);
     } finally {
       setIsWithdrawing(false);
     }
@@ -235,7 +246,7 @@ export function TotalBalanceCard() {
             {showDeposit ? 'Cancel' : '+ Deposit'}
           </button>
           <button
-            onClick={() => { setShowWithdraw(!showWithdraw); setShowDeposit(false); }}
+            onClick={() => { setShowWithdraw(!showWithdraw); setShowDeposit(false); setWithdrawError(null); setWithdrawSuccess(false); }}
             className={`text-xs font-medium ${showWithdraw ? 'text-gray-400' : 'text-orange-400 hover:text-orange-300'}`}
           >
             {showWithdraw ? 'Cancel' : '↑ Withdraw'}
@@ -307,6 +318,12 @@ export function TotalBalanceCard() {
             </button>
           </div>
 
+          {withdrawError && (
+            <p className="text-xs text-red-400 mb-2 text-center px-1">{withdrawError}</p>
+          )}
+          {withdrawSuccess && (
+            <p className="text-xs text-green-400 mb-2 text-center">✅ Withdrawal successful!</p>
+          )}
           <button
             onClick={handleWithdraw}
             disabled={isWithdrawing || !withdrawAmount}
