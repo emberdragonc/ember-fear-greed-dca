@@ -116,17 +116,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get delegation from database (lookup by user's EOA address)
-    const { data: delegation, error: dbError } = await getSupabase()
+    // Get delegation — try user_address first, then smart_account_address as fallback.
+    // No expiry filter: expiry is enforced on-chain by the caveat enforcer.
+    const { data: byUser } = await getSupabase()
       .from('delegations')
       .select('*')
       .eq('user_address', userAddress.toLowerCase())
-      .gt('expires_at', new Date().toISOString())
-      .single();
+      .order('created_at', { ascending: false })
+      .limit(1);
 
-    if (dbError || !delegation) {
+    const { data: bySA } = !byUser?.length ? await getSupabase()
+      .from('delegations')
+      .select('*')
+      .eq('smart_account_address', smartAccountAddress.toLowerCase())
+      .order('created_at', { ascending: false })
+      .limit(1) : { data: null };
+
+    const delegation = byUser?.[0] ?? bySA?.[0] ?? null;
+
+    if (!delegation) {
+      console.error('[withdraw] No delegation found for user_address:', userAddress, 'smart_account:', smartAccountAddress);
       return NextResponse.json(
-        { error: 'No active delegation found. Please complete Step 3 - Configure DCA Delegation first.' },
+        { error: 'No delegation found. Please set up DCA to enable withdrawals.' },
         { status: 404 }
       );
     }
