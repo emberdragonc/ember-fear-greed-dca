@@ -5,6 +5,7 @@ import { useAccount, useBalance, useReadContract, useSendTransaction, useWriteCo
 import { base } from 'wagmi/chains';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { useEthPrice } from '@/hooks/useEthPrice';
+import { useWithdraw } from '@/hooks/useWithdraw';
 import { TOKENS } from '@/lib/swap';
 import { formatUnits, parseUnits, parseEther } from 'viem';
 
@@ -53,9 +54,8 @@ export function TotalBalanceCard() {
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawToken, setWithdrawToken] = useState<'WETH' | 'USDC'>('USDC');
   const [showWithdraw, setShowWithdraw] = useState(false);
-  const [isWithdrawing, setIsWithdrawing] = useState(false);
-  const [withdrawError, setWithdrawError] = useState<string | null>(null);
-  const [withdrawSuccess, setWithdrawSuccess] = useState(false);
+
+  const { state: withdrawState, withdraw, reset: resetWithdraw } = useWithdraw();
 
   const { sendTransaction, isPending: isSendingEth } = useSendTransaction();
   const { writeContract, isPending: isSendingUsdc } = useWriteContract();
@@ -145,10 +145,7 @@ export function TotalBalanceCard() {
   };
 
   const handleWithdraw = async () => {
-    if (!smartAccountAddress || !eoaAddress || !withdrawAmount) {
-      setWithdrawError('Please connect your wallet and enter a withdrawal amount.');
-      return;
-    }
+    if (!smartAccountAddress || !eoaAddress || !withdrawAmount) return;
 
     const withdrawAmountBigInt = withdrawToken === 'WETH'
       ? parseEther(withdrawAmount)
@@ -156,41 +153,20 @@ export function TotalBalanceCard() {
     const currentBalance = withdrawToken === 'WETH'
       ? (wethBalanceRaw as bigint ?? 0n)
       : (usdcBalanceRaw as bigint ?? 0n);
-    if (withdrawAmountBigInt > currentBalance) {
-      setWithdrawError(`Insufficient ${withdrawToken} balance in your smart wallet.`);
-      return;
-    }
+    if (withdrawAmountBigInt > currentBalance) return;
 
-    setIsWithdrawing(true);
-    setWithdrawError(null);
-    try {
-      const response = await fetch('/api/withdraw', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          smartAccountAddress,
-          recipientAddress: eoaAddress,
-          userAddress: eoaAddress,
-          amount: withdrawAmountBigInt.toString(),
-          token: withdrawToken,
-        }),
-      });
+    const result = await withdraw({
+      smartAccount,
+      smartAccountAddress,
+      recipientAddress: eoaAddress,
+      userAddress: eoaAddress,
+      amount: withdrawAmountBigInt,
+      token: withdrawToken,
+    });
 
-      const data = await response.json();
-      if (!response.ok) {
-        setWithdrawError(data.error || 'Withdrawal failed');
-        return;
-      }
-
+    if (result.status === 'success') {
       setWithdrawAmount('');
-      setShowWithdraw(false);
       refetchAll();
-      setWithdrawSuccess(true);
-    } catch (error) {
-      console.error('Withdraw failed:', error);
-      setWithdrawError(error instanceof Error ? error.message.substring(0, 120) : 'Withdrawal failed');
-    } finally {
-      setIsWithdrawing(false);
     }
   };
 
@@ -217,7 +193,7 @@ export function TotalBalanceCard() {
             {showDeposit ? 'Cancel' : '+ Deposit'}
           </button>
           <button
-            onClick={() => { setShowWithdraw(!showWithdraw); setShowDeposit(false); setWithdrawError(null); setWithdrawSuccess(false); }}
+            onClick={() => { setShowWithdraw(!showWithdraw); setShowDeposit(false); resetWithdraw(); }}
             className={`text-xs font-medium ${showWithdraw ? 'text-gray-400' : 'text-orange-400 hover:text-orange-300'}`}
           >
             {showWithdraw ? 'Cancel' : '↑ Withdraw'}
@@ -289,18 +265,31 @@ export function TotalBalanceCard() {
             </button>
           </div>
 
-          {withdrawError && (
-            <p className="text-xs text-red-400 mb-2 text-center px-1">{withdrawError}</p>
+          {withdrawState.status === 'error' && (
+            <div className="mb-2">
+              <p className="text-xs text-red-400 text-center px-1">{withdrawState.message}</p>
+              {withdrawState.details && (
+                <details className="mt-1">
+                  <summary className="text-xs text-red-300/60 cursor-pointer text-center">Show details</summary>
+                  <pre className="text-[10px] text-red-300/50 mt-1 whitespace-pre-wrap break-all max-h-32 overflow-y-auto">{withdrawState.details}</pre>
+                </details>
+              )}
+            </div>
           )}
-          {withdrawSuccess && (
-            <p className="text-xs text-green-400 mb-2 text-center">✅ Withdrawal successful!</p>
+          {withdrawState.status === 'pending' && (
+            <p className="text-xs text-orange-300 mb-2 text-center animate-pulse">{withdrawState.step}</p>
+          )}
+          {withdrawState.status === 'success' && (
+            <p className="text-xs text-green-400 mb-2 text-center">
+              ✅ Withdrawn via {withdrawState.method === 'userOp' ? 'UserOp' : 'delegation'}!
+            </p>
           )}
           <button
             onClick={handleWithdraw}
-            disabled={isWithdrawing || !withdrawAmount}
+            disabled={withdrawState.status === 'pending' || !withdrawAmount}
             className="w-full px-3 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors"
           >
-            {isWithdrawing ? 'Processing...' : `Withdraw ${withdrawToken}`}
+            {withdrawState.status === 'pending' ? withdrawState.step : `Withdraw ${withdrawToken}`}
           </button>
         </div>
       )}
