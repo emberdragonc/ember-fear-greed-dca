@@ -4,6 +4,7 @@ import {
   rainbowWallet,
   walletConnectWallet,
   metaMaskWallet,
+  baseAccount,
   coinbaseWallet,
   injectedWallet,
   rabbyWallet,
@@ -11,12 +12,6 @@ import {
 } from '@rainbow-me/rainbowkit/wallets';
 import { createConfig, http } from 'wagmi';
 import { base, baseSepolia } from 'wagmi/chains';
-
-// Force Coinbase Wallet into EOA-only mode.
-// Without this, mobile CB Wallet uses "smart wallet" mode which intercepts
-// eth_signTypedData_v4 and tries to simulate MetaMask smart account UserOps —
-// fails with "Error generating message" and blocks withdrawals.
-(coinbaseWallet as any).preference = { options: 'eoaOnly' };
 
 // Use Base Sepolia for testing, Base mainnet for production
 const chainId = parseInt(process.env.NEXT_PUBLIC_CHAIN_ID || '8453');
@@ -40,6 +35,7 @@ const connectors = connectorsForWallets(
       groupName: 'Popular',
       wallets: [
         metaMaskWallet,
+        baseAccount,
         coinbaseWallet,
         rabbyWallet,
         phantomWallet,
