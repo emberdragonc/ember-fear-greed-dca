@@ -47,7 +47,7 @@ interface EthPriceData {
 
 export function TotalBalanceCard() {
   const { address: eoaAddress } = useAccount();
-  const { smartAccountAddress, smartAccount } = useSmartAccountContext();
+  const { smartAccountAddress, smartAccount, createSmartAccount } = useSmartAccountContext();
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
   
@@ -154,9 +154,17 @@ export function TotalBalanceCard() {
       alert('Please connect your wallet and enter a withdrawal amount.');
       return;
     }
-    if (!smartAccount) {
-      alert('Smart account not ready. Please disconnect and reconnect your wallet, then try again. If using a mobile wallet via WalletConnect, make sure you\'re on the Base network.');
-      return;
+    let account = smartAccount;
+    if (!account) {
+      setIsWithdrawing(true);
+      try {
+        account = await createSmartAccount();
+      } catch (e) { /* fall through */ }
+      if (!account) {
+        alert('Could not initialize smart account. Please disconnect and reconnect your wallet.');
+        setIsWithdrawing(false);
+        return;
+      }
     }
     setIsWithdrawing(true);
     try {
@@ -166,7 +174,7 @@ export function TotalBalanceCard() {
       });
 
       const smartAccountClient = createSmartAccountClient({
-        account: smartAccount,
+        account: account as any,
         chain: base,
         bundlerTransport: http(BUNDLER_URL),
         paymaster: pimlicoClient,
@@ -298,14 +306,10 @@ export function TotalBalanceCard() {
               Max
             </button>
           </div>
-          {!smartAccount && smartAccountAddress && (
-            <p className="text-xs text-yellow-400 mb-2 text-center">
-              ⚠️ Smart account not ready. Disconnect and reconnect your wallet to fix.
-            </p>
-          )}
+
           <button
             onClick={handleWithdraw}
-            disabled={isWithdrawing || !withdrawAmount || !smartAccount}
+            disabled={isWithdrawing || !withdrawAmount}
             className="w-full px-3 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors"
           >
             {isWithdrawing ? 'Processing...' : `Withdraw ${withdrawToken}`}

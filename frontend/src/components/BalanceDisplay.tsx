@@ -41,7 +41,7 @@ const BUNDLER_URL = `https://api.pimlico.io/v2/8453/rpc?apikey=${PIMLICO_API_KEY
 
 export function BalanceDisplay() {
   const { address: eoaAddress } = useAccount();
-  const { smartAccountAddress, smartAccount } = useSmartAccountContext();
+  const { smartAccountAddress, smartAccount, createSmartAccount, state: smartAccountState } = useSmartAccountContext();
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
   
@@ -140,11 +140,24 @@ export function BalanceDisplay() {
       setWithdrawError('Please connect your wallet and enter a withdrawal amount.'); return;
       return;
     }
-    if (!smartAccount) {
-      // Smart account not initialized — common on mobile wallets via WalletConnect
-      // Try to re-initialize before giving up
-      setWithdrawError('Smart account not ready. Please disconnect and reconnect your wallet.'); return;
-      return;
+    // If smartAccount not ready, attempt to initialize it first
+    let account = smartAccount;
+    if (!account) {
+      setWithdrawError('Initializing smart account, please wait...');
+      setIsWithdrawing(true);
+      try {
+        account = await createSmartAccount();
+      } catch (e) {
+        setWithdrawError('Could not initialize smart account. Please disconnect and reconnect your wallet.');
+        setIsWithdrawing(false);
+        return;
+      }
+      if (!account) {
+        setWithdrawError('Smart account unavailable. Try disconnecting and reconnecting your wallet.');
+        setIsWithdrawing(false);
+        return;
+      }
+      setWithdrawError(null);
     }
 
     console.log('🚀 WITHDRAW v3.0 - Detailed transfer encoding debug');
@@ -171,7 +184,7 @@ export function BalanceDisplay() {
 
       // Create smart account client with Pimlico paymaster (uses pm_sponsorUserOperation)
       const smartAccountClient = createSmartAccountClient({
-        account: smartAccount,
+        account: account as any,
         chain: base,
         bundlerTransport: http(BUNDLER_URL),
         paymaster: pimlicoClient,
@@ -355,17 +368,13 @@ export function BalanceDisplay() {
           {withdrawSuccess && (
             <p className="text-xs text-green-400 mb-2 text-center">✅ Withdrawal successful!</p>
           )}
-          {!smartAccount && smartAccountAddress && (
-            <p className="text-xs text-yellow-400 mb-2 text-center">
-              ⚠️ Smart account not ready. Disconnect and reconnect your wallet.
-            </p>
-          )}
+
           <button
             onClick={handleWithdraw}
-            disabled={isWithdrawing || !withdrawAmount || !smartAccount}
+            disabled={isWithdrawing || !withdrawAmount}
             className="w-full px-3 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors"
           >
-            {isWithdrawing ? 'Processing...' : !smartAccount ? 'Wallet Not Ready' : `Withdraw ${withdrawToken}`}
+            {isWithdrawing ? 'Processing...' : `Withdraw ${withdrawToken}`}
           </button>
         </div>
       )}
