@@ -165,6 +165,19 @@ export function TotalBalanceCard() {
       alert('Please connect your wallet and enter a withdrawal amount.');
       return;
     }
+
+    // Validate balance before hitting the wallet
+    const withdrawAmountBigInt = withdrawToken === 'WETH'
+      ? parseEther(withdrawAmount)
+      : parseUnits(withdrawAmount, 6);
+    const currentBalance = withdrawToken === 'WETH'
+      ? (wethBalanceRaw as bigint ?? 0n)
+      : (usdcBalanceRaw as bigint ?? 0n);
+    if (withdrawAmountBigInt > currentBalance) {
+      setWithdrawError(`Insufficient ${withdrawToken} balance in your smart wallet.`);
+      return;
+    }
+
     let account = smartAccount;
     if (!account) {
       setIsWithdrawing(true);
