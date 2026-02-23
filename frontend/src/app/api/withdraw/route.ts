@@ -109,9 +109,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (token !== 'ETH' && token !== 'USDC') {
+    if (token !== 'ETH' && token !== 'WETH' && token !== 'USDC') {
       return NextResponse.json(
-        { error: 'Invalid token - must be ETH or USDC' },
+        { error: 'Invalid token - must be WETH or USDC' },
         { status: 400 }
       );
     }
@@ -150,13 +150,13 @@ export async function POST(request: NextRequest) {
     let executionCallData: Hex;
     let executionValue = 0n;
 
-    if (token === 'ETH') {
-      // For ETH (WETH): transfer ERC20 WETH to recipient
+    if (token === 'ETH' || token === 'WETH') {
+      // For WETH: transfer ERC20 WETH to recipient
       executionCallData = encodeFunctionData({
-  abi: erc20Abi,
-  functionName: 'transfer',
-  args: [recipientAddress as Address, BigInt(amount)],
-  });
+        abi: erc20Abi,
+        functionName: 'transfer',
+        args: [recipientAddress as Address, BigInt(amount)],
+      });
     } else {
       // For USDC: call transfer on USDC contract
       executionCallData = encodeFunctionData({
@@ -166,7 +166,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const executionTarget = token === 'ETH' ? WETH : USDC;
+    const executionTarget = (token === 'ETH' || token === 'WETH') ? WETH : USDC;
     const executionEncoded = encodeExecution(
       executionTarget as Address,
       executionValue,

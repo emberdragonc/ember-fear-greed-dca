@@ -6,21 +6,10 @@ import { base } from 'wagmi/chains';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { useEthPrice } from '@/hooks/useEthPrice';
 import { TOKENS } from '@/lib/swap';
-import { formatUnits, parseUnits, parseEther, encodeFunctionData, http } from 'viem';
-import { entryPoint07Address } from 'viem/account-abstraction';
-import { createSmartAccountClient } from 'permissionless';
-import { createPimlicoClient } from 'permissionless/clients/pimlico';
+import { formatUnits, parseUnits, parseEther } from 'viem';
 
 // WETH address on Base
 const WETH_ADDRESS = '0x4200000000000000000000000000000000000006' as const;
-
-// Pimlico bundler URL
-const PIMLICO_API_KEY = process.env.NEXT_PUBLIC_PIMLICO_API_KEY || '';
-const BUNDLER_URL = `https://api.pimlico.io/v2/8453/rpc?apikey=${PIMLICO_API_KEY}`;
-
-if (!PIMLICO_API_KEY && typeof window !== 'undefined') {
-  console.error('[TotalBalanceCard] NEXT_PUBLIC_PIMLICO_API_KEY is not set. Withdrawals will fail.');
-}
 
 // ERC20 ABI
 const erc20Abi = [
@@ -156,17 +145,12 @@ export function TotalBalanceCard() {
   };
 
   const handleWithdraw = async () => {
-    if (!PIMLICO_API_KEY) {
-      alert('Withdrawal service is not configured. Please contact support.');
-      console.error('[handleWithdraw] NEXT_PUBLIC_PIMLICO_API_KEY is missing — set this env var in Vercel and redeploy.');
-      return;
-    }
-    if (!smartAccountAddress || !eoaAddress || !withdrawAmount || !publicClient) {
-      alert('Please connect your wallet and enter a withdrawal amount.');
+    if (!smartAccountAddress || !eoaAddress || !withdrawAmount) {
+      setWithdrawError('Please connect your wallet and enter a withdrawal amount.');
       return;
     }
 
-    // Validate balance before hitting the wallet
+    // Validate balance before submitting
     const withdrawAmountBigInt = withdrawToken === 'WETH'
       ? parseEther(withdrawAmount)
       : parseUnits(withdrawAmount, 6);
@@ -178,68 +162,34 @@ export function TotalBalanceCard() {
       return;
     }
 
-    let account = smartAccount;
-    if (!account) {
-      setIsWithdrawing(true);
-      try {
-        account = await createSmartAccount();
-      } catch (e) { /* fall through */ }
-      if (!account) {
-        setWithdrawError('Could not initialize smart account. Please disconnect and reconnect your wallet.');
-        setIsWithdrawing(false);
+    setIsWithdrawing(true);
+    setWithdrawError(null);
+    try {
+      const response = await fetch('/api/withdraw', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          smartAccountAddress,
+          recipientAddress: eoaAddress,
+          userAddress: eoaAddress,
+          amount: withdrawAmountBigInt.toString(),
+          token: withdrawToken, // 'WETH' or 'USDC'
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        setWithdrawError(data.error || 'Withdrawal failed');
         return;
       }
-    }
-    setIsWithdrawing(true);
-    try {
-      const pimlicoClient = createPimlicoClient({
-        transport: http(BUNDLER_URL),
-        entryPoint: { address: entryPoint07Address, version: '0.7' },
-      });
 
-      const smartAccountClient = createSmartAccountClient({
-        account: account as any,
-        chain: base,
-        bundlerTransport: http(BUNDLER_URL),
-        paymaster: pimlicoClient,
-        userOperation: {
-          estimateFeesPerGas: async () => (await pimlicoClient.getUserOperationGasPrice()).fast,
-        },
-      });
-
-      // Build WETH or USDC transfer (both are ERC20 transfers, NOT native ETH!)
-      const tokenAddress = withdrawToken === 'WETH' ? WETH_ADDRESS : TOKENS.USDC;
-      const amount = withdrawToken === 'WETH' ? parseEther(withdrawAmount) : parseUnits(withdrawAmount, 6);
-      
-      const transferData = encodeFunctionData({
-        abi: erc20Abi,
-        functionName: 'transfer',
-        args: [eoaAddress as `0x${string}`, amount],
-      });
-      
-      const txParams = {
-        to: tokenAddress as `0x${string}`,
-        value: 0n,
-        data: transferData,
-      };
-
-      await smartAccountClient.sendTransaction(txParams as any);
       setWithdrawAmount('');
       setShowWithdraw(false);
       refetchAll();
-      setWithdrawSuccess(true); setWithdrawError(null);
+      setWithdrawSuccess(true);
     } catch (error) {
       console.error('Withdraw failed:', error);
-      let errorMsg = 'Withdrawal failed';
-      if (error instanceof Error) {
-        errorMsg = error.message.replace(/https?:\/\/[^\s]+/g, '[URL]');
-        if (error.message.includes('insufficient funds')) errorMsg = 'Insufficient ETH for gas. Deposit some ETH to your smart account.';
-        else if (error.message.includes('User rejected') || error.message.includes('user rejected')) errorMsg = 'Transaction rejected by wallet.';
-        else if (error.message.includes('paymaster')) errorMsg = 'Paymaster error — gas sponsorship failed. Try again.';
-        else if (error.message.includes('bundler')) errorMsg = 'Bundler error — try again in a moment.';
-        else errorMsg = error.message.substring(0, 120);
-      }
-      setWithdrawError(errorMsg);
+      setWithdrawError(error instanceof Error ? error.message.substring(0, 120) : 'Withdrawal failed');
     } finally {
       setIsWithdrawing(false);
     }
