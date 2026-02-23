@@ -18,6 +18,10 @@ const WETH_ADDRESS = '0x4200000000000000000000000000000000000006' as const;
 const PIMLICO_API_KEY = process.env.NEXT_PUBLIC_PIMLICO_API_KEY || '';
 const BUNDLER_URL = `https://api.pimlico.io/v2/8453/rpc?apikey=${PIMLICO_API_KEY}`;
 
+if (!PIMLICO_API_KEY && typeof window !== 'undefined') {
+  console.error('[TotalBalanceCard] NEXT_PUBLIC_PIMLICO_API_KEY is not set. Withdrawals will fail.');
+}
+
 // ERC20 ABI
 const erc20Abi = [
   {
@@ -152,6 +156,11 @@ export function TotalBalanceCard() {
   };
 
   const handleWithdraw = async () => {
+    if (!PIMLICO_API_KEY) {
+      alert('Withdrawal service is not configured. Please contact support.');
+      console.error('[handleWithdraw] NEXT_PUBLIC_PIMLICO_API_KEY is missing — set this env var in Vercel and redeploy.');
+      return;
+    }
     if (!smartAccountAddress || !eoaAddress || !withdrawAmount || !publicClient) {
       alert('Please connect your wallet and enter a withdrawal amount.');
       return;

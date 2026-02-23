@@ -39,6 +39,10 @@ const erc20Abi = [
 const PIMLICO_API_KEY = process.env.NEXT_PUBLIC_PIMLICO_API_KEY || '';
 const BUNDLER_URL = `https://api.pimlico.io/v2/8453/rpc?apikey=${PIMLICO_API_KEY}`;
 
+if (!PIMLICO_API_KEY && typeof window !== 'undefined') {
+  console.error('[BalanceDisplay] NEXT_PUBLIC_PIMLICO_API_KEY is not set. Withdrawals will fail.');
+}
+
 export function BalanceDisplay() {
   const { address: eoaAddress } = useAccount();
   const { smartAccountAddress, smartAccount, createSmartAccount, state: smartAccountState } = useSmartAccountContext();
@@ -136,6 +140,11 @@ export function BalanceDisplay() {
   };
 
   const handleWithdraw = async () => {
+    if (!PIMLICO_API_KEY) {
+      setWithdrawError('Withdrawal service is not configured. Please contact support.');
+      console.error('[handleWithdraw] NEXT_PUBLIC_PIMLICO_API_KEY is missing — set this env var in Vercel and redeploy.');
+      return;
+    }
     if (!smartAccountAddress || !eoaAddress || !withdrawAmount || !publicClient) {
       setWithdrawError('Please connect your wallet and enter a withdrawal amount.'); return;
       return;
