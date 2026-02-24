@@ -87,25 +87,17 @@ export function useWithdraw() {
 
     // Dynamically import permissionless to avoid SSR issues
     const { createSmartAccountClient } = await import('permissionless');
-    const { createPimlicoClient } = await import('permissionless/clients/pimlico');
 
-    console.log('[withdraw:method-a] Creating Pimlico client...');
-
-    const pimlicoClient = createPimlicoClient({
-      transport: http(pimlicoUrl),
-      entryPoint: {
-        address: ENTRY_POINT_V07,
-        version: '0.7',
-      },
-    });
-
-    console.log('[withdraw:method-a] Creating smart account client...');
+    // NOTE: No paymaster — Pimlico's pm_getPaymasterStubData (EntryPoint v0.7) requires
+    // a sponsorship policy we haven't configured. Our Pimlico account only has
+    // pm_sponsorUserOperation (v0.6 style). Base gas is ~$0.001/UserOp so the smart
+    // account self-sponsors from its own ETH. If no ETH, this throws → Method B kicks in.
+    console.log('[withdraw:method-a] Creating smart account client (no paymaster — self-sponsored gas)...');
 
     const smartAccountClient = createSmartAccountClient({
       account: smartAccount,
       chain: base,
       bundlerTransport: http(pimlicoUrl),
-      paymaster: pimlicoClient,
     });
 
     console.log('[withdraw:method-a] Smart account client ready. Sending transaction via UserOp...');
