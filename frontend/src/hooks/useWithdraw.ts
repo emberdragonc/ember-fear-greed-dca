@@ -85,32 +85,35 @@ export function useWithdraw() {
 
     setState({ status: 'pending', step: 'Building UserOp...', method: 'userOp' });
 
-    // Dynamically import permissionless to avoid SSR issues
-    const { createSmartAccountClient } = await import('permissionless');
+    // Use viem's native createBundlerClient — this guarantees ALL bundler calls
+    // (eth_estimateUserOperationGas, eth_sendUserOperation, etc.) route through
+    // the Pimlico transport, not the wagmi publicClient (which doesn't support
+    // bundler methods and was causing "method does not exist" errors).
+    const { createBundlerClient } = await import('viem/account-abstraction');
 
-    // NOTE: No paymaster — Pimlico's pm_getPaymasterStubData (EntryPoint v0.7) requires
-    // a sponsorship policy we haven't configured. Our Pimlico account only has
-    // pm_sponsorUserOperation (v0.6 style). Base gas is ~$0.001/UserOp so the smart
-    // account self-sponsors from its own ETH. If no ETH, this throws → Method B kicks in.
-    console.log('[withdraw:method-a] Creating smart account client (no paymaster — self-sponsored gas)...');
+    console.log('[withdraw:method-a] Creating bundler client (Pimlico, no paymaster — self-sponsored gas)...');
 
-    const smartAccountClient = createSmartAccountClient({
+    const bundlerClient = createBundlerClient({
       account: smartAccount,
+      transport: http(pimlicoUrl),
       chain: base,
-      bundlerTransport: http(pimlicoUrl),
     });
 
-    console.log('[withdraw:method-a] Smart account client ready. Sending transaction via UserOp...');
+    console.log('[withdraw:method-a] Sending UserOp...');
     setState({ status: 'pending', step: 'Sign the UserOp in your wallet...', method: 'userOp' });
 
-    const txHash = await smartAccountClient.sendTransaction({
-      to: tokenAddress,
-      data: callData,
-      value: 0n,
-    } as any);
+    const userOpHash = await bundlerClient.sendUserOperation({
+      account: smartAccount,
+      calls: [{ to: tokenAddress, data: callData, value: 0n }],
+    });
 
-    console.log('[withdraw:method-a] ✅ UserOp submitted! txHash:', txHash);
-    setState({ status: 'pending', step: 'Waiting for confirmation...', method: 'userOp' });
+    console.log('[withdraw:method-a] UserOp submitted:', userOpHash, '— waiting for receipt...');
+    setState({ status: 'pending', step: 'Waiting for on-chain confirmation...', method: 'userOp' });
+
+    const receipt = await bundlerClient.waitForUserOperationReceipt({ hash: userOpHash });
+    const txHash = receipt.receipt.transactionHash;
+
+    console.log('[withdraw:method-a] ✅ UserOp confirmed! txHash:', txHash);
 
     return txHash;
   }, []);
