@@ -84,7 +84,8 @@ function deriveEthPrice(exec: Execution): number | null {
 function calculatePortfolioHistory(
   executions: Execution[],
   currentEthPrice: number,
-  currentOnChainUsdc: number = 0
+  currentOnChainUsdc: number = 0,
+  currentOnChainTotalUsd: number = 0
 ): { history: PortfolioDataPoint[]; apyData: APYData } {
   // Filter successful buy/sell executions (not hold, not rebalance)
   const successfulSwaps = executions
@@ -175,20 +176,22 @@ function calculatePortfolioHistory(
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([, point]) => point);
 
-  // Override the last point to use current market price + actual on-chain USDC
+  // Use on-chain total as the authoritative current value when available;
+  // fall back to reconstructed value if not yet loaded.
+  const currentValue = currentOnChainTotalUsd > 0
+    ? currentOnChainTotalUsd
+    : ethBalance * currentEthPrice + currentOnChainUsdc + totalUsdcReceived;
+
+  // Override the last chart point to use the real current value
   if (history.length > 0) {
-    const last = history[history.length - 1];
-    const currentTotal = last.eth_balance * currentEthPrice + currentOnChainUsdc + totalUsdcReceived;
     history[history.length - 1] = {
-      ...last,
-      total_usd: Math.max(0, currentTotal),
+      ...history[history.length - 1],
+      total_usd: Math.max(0, currentValue),
       eth_price: currentEthPrice,
       usdc_balance: currentOnChainUsdc + totalUsdcReceived,
     };
   }
 
-  // True current value = ETH at market + actual on-chain USDC
-  const currentValue = ethBalance * currentEthPrice + currentOnChainUsdc + totalUsdcReceived;
   // Cost basis = total USDC ever spent on buys + current USDC still in account
   const totalDeposited = totalUsdcSpentAll + currentOnChainUsdc;
 
@@ -219,7 +222,11 @@ function calculatePortfolioHistory(
   };
 }
 
-export function usePortfolioHistory(userAddress: string | null, currentOnChainUsdc: number = 0) {
+export function usePortfolioHistory(
+  userAddress: string | null,
+  currentOnChainUsdc: number = 0,
+  currentOnChainTotalUsd: number = 0
+) {
   const [history, setHistory] = useState<PortfolioDataPoint[]>([]);
   const [apyData, setApyData] = useState<APYData>({
     apy: 0,
@@ -239,6 +246,9 @@ export function usePortfolioHistory(userAddress: string | null, currentOnChainUs
       setIsLoading(false);
       return;
     }
+    // capture these in the closure so they're stable per-run
+    const onChainUsdc = currentOnChainUsdc;
+    const onChainTotal = currentOnChainTotalUsd;
 
     setIsLoading(true);
     setError(null);
@@ -260,7 +270,8 @@ export function usePortfolioHistory(userAddress: string | null, currentOnChainUs
       const { history: portfolioHistory, apyData: calculatedApy } = calculatePortfolioHistory(
         executions,
         currentEthPrice,
-        currentOnChainUsdc
+        onChainUsdc,
+        onChainTotal
       );
 
       setHistory(portfolioHistory);
@@ -273,7 +284,7 @@ export function usePortfolioHistory(userAddress: string | null, currentOnChainUs
     } finally {
       setIsLoading(false);
     }
-  }, [userAddress]);
+  }, [userAddress, currentOnChainUsdc, currentOnChainTotalUsd]);
 
   useEffect(() => {
     refresh();

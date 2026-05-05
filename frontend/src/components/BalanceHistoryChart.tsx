@@ -1,12 +1,16 @@
 'use client';
 
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { useReadContract } from 'wagmi';
+import { useReadContract, useBalance } from 'wagmi';
 import { base } from 'wagmi/chains';
 import { formatUnits } from 'viem';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { usePortfolioHistory } from '@/hooks/usePortfolioHistory';
+import { useEthPrice } from '@/hooks/useEthPrice';
 import { TOKENS } from '@/lib/swap';
+
+// WETH on Base
+const WETH_ADDRESS = '0x4200000000000000000000000000000000000006' as const;
 
 const erc20BalanceAbi = [
   {
@@ -61,7 +65,22 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 export function BalanceHistoryChart() {
   const { smartAccountAddress } = useSmartAccountContext();
 
-  // Fetch on-chain USDC balance so the chart includes unswapped USDC
+  const { price: ethPrice } = useEthPrice();
+
+  // Mirror TotalBalanceCard: read ETH (native + WETH) and USDC on-chain
+  const { data: ethBalance } = useBalance({
+    address: smartAccountAddress as `0x${string}` | undefined,
+    chainId: base.id,
+    query: { enabled: !!smartAccountAddress },
+  });
+  const { data: wethRaw } = useReadContract({
+    address: WETH_ADDRESS,
+    abi: erc20BalanceAbi,
+    functionName: 'balanceOf',
+    args: smartAccountAddress ? [smartAccountAddress as `0x${string}`] : undefined,
+    chainId: base.id,
+    query: { enabled: !!smartAccountAddress },
+  } as any);
   const { data: usdcBalanceRaw } = useReadContract({
     address: TOKENS.USDC,
     abi: erc20BalanceAbi,
@@ -70,11 +89,19 @@ export function BalanceHistoryChart() {
     chainId: base.id,
     query: { enabled: !!smartAccountAddress },
   } as any);
-  const currentOnChainUsdc = usdcBalanceRaw
-    ? parseFloat(formatUnits(usdcBalanceRaw as bigint, 6))
+
+  const nativeEth = ethBalance ? parseFloat(formatUnits(ethBalance.value, 18)) : 0;
+  const weth = wethRaw ? parseFloat(formatUnits(wethRaw as bigint, 18)) : 0;
+  const currentOnChainUsdc = usdcBalanceRaw ? parseFloat(formatUnits(usdcBalanceRaw as bigint, 6)) : 0;
+  const currentOnChainTotalUsd = ethPrice
+    ? (nativeEth + weth) * ethPrice + currentOnChainUsdc
     : 0;
 
-  const { history, apyData, isLoading, hasRealData, error } = usePortfolioHistory(smartAccountAddress, currentOnChainUsdc);
+  const { history, apyData, isLoading, hasRealData, error } = usePortfolioHistory(
+    smartAccountAddress,
+    currentOnChainUsdc,
+    currentOnChainTotalUsd
+  );
 
   // Use real data if available, otherwise mock data
   const chartData: ChartDataPoint[] = hasRealData && history.length > 0
