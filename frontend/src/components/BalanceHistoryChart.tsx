@@ -112,7 +112,7 @@ export function BalanceHistoryChart() {
             </div>
           )}
           
-          <div className="h-48 w-full">
+          <div className="h-56 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
                 data={chartData}
@@ -138,6 +138,10 @@ export function BalanceHistoryChart() {
                   axisLine={false}
                   tickFormatter={(value) => `$${value >= 1000 ? `${(value / 1000).toFixed(1)}k` : value}`}
                   width={45}
+                  domain={([
+                    (dataMin: number) => Math.floor(dataMin * 0.97),
+                    (dataMax: number) => Math.ceil(dataMax * 1.03),
+                  ] as any)}
                 />
                 <Tooltip content={<CustomTooltip />} />
                 <Line
