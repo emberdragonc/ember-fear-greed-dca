@@ -1,8 +1,22 @@
 'use client';
 
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { useReadContract } from 'wagmi';
+import { base } from 'wagmi/chains';
+import { formatUnits } from 'viem';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { usePortfolioHistory } from '@/hooks/usePortfolioHistory';
+import { TOKENS } from '@/lib/swap';
+
+const erc20BalanceAbi = [
+  {
+    name: 'balanceOf',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: 'balance', type: 'uint256' }],
+  },
+] as const;
 
 // Mock data for demonstration when no history exists
 const generateMockData = () => {
@@ -46,7 +60,21 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
 export function BalanceHistoryChart() {
   const { smartAccountAddress } = useSmartAccountContext();
-  const { history, isLoading, hasRealData, error } = usePortfolioHistory(smartAccountAddress);
+
+  // Fetch on-chain USDC balance so the chart includes unswapped USDC
+  const { data: usdcBalanceRaw } = useReadContract({
+    address: TOKENS.USDC,
+    abi: erc20BalanceAbi,
+    functionName: 'balanceOf',
+    args: smartAccountAddress ? [smartAccountAddress as `0x${string}`] : undefined,
+    chainId: base.id,
+    query: { enabled: !!smartAccountAddress },
+  } as any);
+  const currentOnChainUsdc = usdcBalanceRaw
+    ? parseFloat(formatUnits(usdcBalanceRaw as bigint, 6))
+    : 0;
+
+  const { history, apyData, isLoading, hasRealData, error } = usePortfolioHistory(smartAccountAddress, currentOnChainUsdc);
 
   // Use real data if available, otherwise mock data
   const chartData: ChartDataPoint[] = hasRealData && history.length > 0
@@ -152,27 +180,24 @@ export function BalanceHistoryChart() {
           {hasRealData && history.length > 1 && (
             <div className="mt-4 grid grid-cols-3 gap-3 text-center">
               <div className="p-2 bg-white/5 rounded-lg">
-                <p className="text-xs text-gray-500">Start</p>
+                <p className="text-xs text-gray-500">Deposited</p>
                 <p className="text-sm font-semibold text-white">
-                  ${history[0]?.total_usd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  ${apyData.totalDeposited.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
               </div>
               <div className="p-2 bg-white/5 rounded-lg">
                 <p className="text-xs text-gray-500">Current</p>
                 <p className="text-sm font-semibold text-white">
-                  ${history[history.length - 1]?.total_usd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  ${apyData.currentValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
               </div>
               <div className="p-2 bg-white/5 rounded-lg">
-                <p className="text-xs text-gray-500">Change</p>
+                <p className="text-xs text-gray-500">P&L</p>
                 {(() => {
-                  const start = history[0]?.total_usd || 0;
-                  const end = history[history.length - 1]?.total_usd || 0;
-                  const change = start > 0 ? ((end - start) / start) * 100 : 0;
-                  const isPositive = change >= 0;
+                  const isPositive = apyData.profitLoss >= 0;
                   return (
                     <p className={`text-sm font-semibold ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {isPositive ? '+' : ''}{change.toFixed(2)}%
+                      {isPositive ? '+' : ''}{apyData.profitLossPercent.toFixed(2)}%
                     </p>
                   );
                 })()}

@@ -79,9 +79,12 @@ function deriveEthPrice(exec: Execution): number | null {
 
 // Calculate portfolio value over time from executions
 // Uses execution-time ETH prices derived from swap rates for historical accuracy.
+// currentOnChainUsdc: the actual USDC balance in the smart account right now,
+// used to reconstruct the full portfolio value (ETH + remaining USDC) at each point.
 function calculatePortfolioHistory(
   executions: Execution[],
-  currentEthPrice: number
+  currentEthPrice: number,
+  currentOnChainUsdc: number = 0
 ): { history: PortfolioDataPoint[]; apyData: APYData } {
   // Filter successful buy/sell executions (not hold, not rebalance)
   const successfulSwaps = executions
@@ -105,8 +108,17 @@ function calculatePortfolioHistory(
 
   // Track cumulative balances
   let ethBalance = 0;
-  let totalUsdcSpent = 0;
-  let totalUsdcReceived = 0;
+  let totalUsdcSpent = 0; // total USDC spent buying ETH (cost basis)
+  let totalUsdcReceived = 0; // total USDC received from sell executions
+
+  // First pass: compute total USDC spent across all swaps so we can
+  // reconstruct the remaining USDC balance at each historical point.
+  let totalUsdcSpentAll = 0;
+  for (const exec of successfulSwaps) {
+    if (exec.action === 'buy') {
+      totalUsdcSpentAll += parseFloat(exec.amount_in) / 1e6;
+    }
+  }
 
   // Group all swaps by calendar date, tracking running state after each
   // so we emit one data point per day (last execution of the day wins)
@@ -134,8 +146,14 @@ function calculatePortfolioHistory(
     // Use the swap rate as the ETH price at this point in time
     const execEthPrice = deriveEthPrice(exec) ?? currentEthPrice;
 
-    // Portfolio value at execution time = ETH held * price then + USDC received
-    const totalUsd = ethBalance * execEthPrice + totalUsdcReceived;
+    // Reconstruct remaining USDC at this point:
+    // currentOnChainUsdc is what's left NOW. Going backwards, every USDC
+    // that was spent after this point was still in the account at this point.
+    const usdcSpentAfterThisPoint = totalUsdcSpentAll - totalUsdcSpent;
+    const estimatedUsdcRemaining = currentOnChainUsdc + usdcSpentAfterThisPoint;
+
+    // Full portfolio value = ETH * price + all remaining USDC
+    const totalUsd = ethBalance * execEthPrice + estimatedUsdcRemaining + totalUsdcReceived;
 
     const dateKey = exec.timestamp.split('T')[0]; // YYYY-MM-DD
     dailyMap.set(dateKey, {
@@ -146,7 +164,7 @@ function calculatePortfolioHistory(
       }),
       total_usd: Math.max(0, totalUsd),
       eth_balance: ethBalance,
-      usdc_balance: totalUsdcReceived,
+      usdc_balance: estimatedUsdcRemaining + totalUsdcReceived,
       eth_price: execEthPrice,
       action: exec.action,
     });
@@ -157,19 +175,22 @@ function calculatePortfolioHistory(
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([, point]) => point);
 
-  // Override the last point to use current market price for the latest value
+  // Override the last point to use current market price + actual on-chain USDC
   if (history.length > 0) {
     const last = history[history.length - 1];
-    const currentTotal = last.eth_balance * currentEthPrice + last.usdc_balance;
+    const currentTotal = last.eth_balance * currentEthPrice + currentOnChainUsdc + totalUsdcReceived;
     history[history.length - 1] = {
       ...last,
       total_usd: Math.max(0, currentTotal),
       eth_price: currentEthPrice,
+      usdc_balance: currentOnChainUsdc + totalUsdcReceived,
     };
   }
 
-  const currentValue = ethBalance * currentEthPrice + totalUsdcReceived;
-  const totalDeposited = totalUsdcSpent;
+  // True current value = ETH at market + actual on-chain USDC
+  const currentValue = ethBalance * currentEthPrice + currentOnChainUsdc + totalUsdcReceived;
+  // Cost basis = total USDC ever spent on buys + current USDC still in account
+  const totalDeposited = totalUsdcSpentAll + currentOnChainUsdc;
 
   const now = new Date();
   const daysActive = Math.max(1, Math.floor((now.getTime() - firstDepositDate.getTime()) / (1000 * 60 * 60 * 24)));
@@ -198,7 +219,7 @@ function calculatePortfolioHistory(
   };
 }
 
-export function usePortfolioHistory(userAddress: string | null) {
+export function usePortfolioHistory(userAddress: string | null, currentOnChainUsdc: number = 0) {
   const [history, setHistory] = useState<PortfolioDataPoint[]>([]);
   const [apyData, setApyData] = useState<APYData>({
     apy: 0,
@@ -238,7 +259,8 @@ export function usePortfolioHistory(userAddress: string | null) {
 
       const { history: portfolioHistory, apyData: calculatedApy } = calculatePortfolioHistory(
         executions,
-        currentEthPrice
+        currentEthPrice,
+        currentOnChainUsdc
       );
 
       setHistory(portfolioHistory);
