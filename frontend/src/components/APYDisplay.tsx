@@ -2,8 +2,8 @@
 
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { usePortfolioHistory } from '@/hooks/usePortfolioHistory';
+import { useSmartAccountBalances } from '@/hooks/useSmartAccountBalances';
 import { useEffect, useState } from 'react';
-import { useAccount } from 'wagmi';
 
 interface AnimatedNumberProps {
   value: number;
@@ -48,9 +48,12 @@ function AnimatedNumber({ value, suffix = '', prefix = '', decimals = 2, isPosit
 
 export function APYDisplay() {
   const { smartAccountAddress } = useSmartAccountContext();
-  const { address: eoaAddress } = useAccount();
-  // Query executions by EOA address (what the backend stores as user_address)
-  const { apyData, isLoading, hasRealData } = usePortfolioHistory(eoaAddress ?? null);
+  const { usdc: currentOnChainUsdc, totalUsd: currentOnChainTotalUsd } = useSmartAccountBalances(smartAccountAddress);
+  const { apyData, isLoading, hasRealData } = usePortfolioHistory(
+    smartAccountAddress,
+    currentOnChainUsdc,
+    currentOnChainTotalUsd
+  );
 
   if (!smartAccountAddress) {
     return null;

@@ -1,26 +1,9 @@
 'use client';
 
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { useReadContract, useBalance } from 'wagmi';
-import { base } from 'wagmi/chains';
-import { formatUnits } from 'viem';
 import { useSmartAccountContext } from '@/contexts/SmartAccountContext';
 import { usePortfolioHistory } from '@/hooks/usePortfolioHistory';
-import { useEthPrice } from '@/hooks/useEthPrice';
-import { TOKENS } from '@/lib/swap';
-
-// WETH on Base
-const WETH_ADDRESS = '0x4200000000000000000000000000000000000006' as const;
-
-const erc20BalanceAbi = [
-  {
-    name: 'balanceOf',
-    type: 'function',
-    stateMutability: 'view',
-    inputs: [{ name: 'account', type: 'address' }],
-    outputs: [{ name: 'balance', type: 'uint256' }],
-  },
-] as const;
+import { useSmartAccountBalances } from '@/hooks/useSmartAccountBalances';
 
 // Mock data for demonstration when no history exists
 const generateMockData = () => {
@@ -65,37 +48,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 export function BalanceHistoryChart() {
   const { smartAccountAddress } = useSmartAccountContext();
 
-  const { price: ethPrice } = useEthPrice();
-
-  // Mirror TotalBalanceCard: read ETH (native + WETH) and USDC on-chain
-  const { data: ethBalance } = useBalance({
-    address: smartAccountAddress as `0x${string}` | undefined,
-    chainId: base.id,
-    query: { enabled: !!smartAccountAddress },
-  });
-  const { data: wethRaw } = useReadContract({
-    address: WETH_ADDRESS,
-    abi: erc20BalanceAbi,
-    functionName: 'balanceOf',
-    args: smartAccountAddress ? [smartAccountAddress as `0x${string}`] : undefined,
-    chainId: base.id,
-    query: { enabled: !!smartAccountAddress },
-  } as any);
-  const { data: usdcBalanceRaw } = useReadContract({
-    address: TOKENS.USDC,
-    abi: erc20BalanceAbi,
-    functionName: 'balanceOf',
-    args: smartAccountAddress ? [smartAccountAddress as `0x${string}`] : undefined,
-    chainId: base.id,
-    query: { enabled: !!smartAccountAddress },
-  } as any);
-
-  const nativeEth = ethBalance ? parseFloat(formatUnits(ethBalance.value, 18)) : 0;
-  const weth = wethRaw ? parseFloat(formatUnits(wethRaw as bigint, 18)) : 0;
-  const currentOnChainUsdc = usdcBalanceRaw ? parseFloat(formatUnits(usdcBalanceRaw as bigint, 6)) : 0;
-  const currentOnChainTotalUsd = ethPrice
-    ? (nativeEth + weth) * ethPrice + currentOnChainUsdc
-    : 0;
+  const { usdc: currentOnChainUsdc, totalUsd: currentOnChainTotalUsd } = useSmartAccountBalances(smartAccountAddress);
 
   const { history, apyData, isLoading, hasRealData, error } = usePortfolioHistory(
     smartAccountAddress,
