@@ -32,13 +32,37 @@ export async function GET(request: Request) {
     }
 
     const supabase = getSupabase();
+    const normalizedAddress = userAddress.toLowerCase();
+
+    // dca_executions.user_address stores the EOA, but the frontend may pass the
+    // smart account address. Resolve: try direct match first, then look up EOA
+    // via delegations if no results.
+    let lookupAddress = normalizedAddress;
+
+    const { data: directCheck } = await supabase
+      .from('dca_executions')
+      .select('user_address')
+      .eq('user_address', normalizedAddress)
+      .limit(1);
+
+    if (!directCheck || directCheck.length === 0) {
+      // Input might be a smart account address — find the corresponding EOA
+      const { data: delegation } = await supabase
+        .from('delegations')
+        .select('user_address')
+        .eq('smart_account_address', normalizedAddress)
+        .limit(1);
+
+      if (delegation && delegation.length > 0) {
+        lookupAddress = delegation[0].user_address.toLowerCase();
+      }
+    }
 
     // Fetch executions for this user, ordered by most recent first
-    // Note: error_message column may not exist yet - query without it for now
     const { data: executions, error } = await supabase
       .from('dca_executions')
       .select('id, user_address, fear_greed_index, action, amount_in, amount_out, fee_collected, tx_hash, status, created_at')
-      .eq('user_address', userAddress.toLowerCase())
+      .eq('user_address', lookupAddress)
       .order('created_at', { ascending: false })
       .limit(500);
 

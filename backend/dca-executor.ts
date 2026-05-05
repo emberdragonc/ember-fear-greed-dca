@@ -154,6 +154,22 @@ async function runDCA() {
 
   if (decision.action === 'hold') {
     console.log('\n✓ Market neutral - No action needed');
+    // Log hold day to DB so it appears in history
+    try {
+      await supabase.from('dca_daily_executions').insert({
+        execution_date: new Date().toISOString().split('T')[0],
+        fear_greed_index: fg.value,
+        decision: 'hold',
+        decision_reason: decision.reason,
+        total_swaps: 0,
+        successful_swaps: 0,
+        total_volume_usd: '0',
+        total_fees_usd: '0',
+      });
+      console.log('[DB] Hold day logged to dca_daily_executions');
+    } catch (dbErr: any) {
+      console.error('[DB] Failed to log hold day:', dbErr?.message);
+    }
     return;
   }
 

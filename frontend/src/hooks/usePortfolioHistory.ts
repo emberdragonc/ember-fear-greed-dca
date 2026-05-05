@@ -61,7 +61,24 @@ async function fetchExecutions(userAddress: string): Promise<Execution[]> {
   }
 }
 
+// Derive ETH price from a swap: USDC in / ETH out (for buys)
+function deriveEthPrice(exec: Execution): number | null {
+  try {
+    const isBuy = exec.action === 'buy';
+    if (!exec.amount_in || !exec.amount_out) return null;
+    const usdcRaw = isBuy ? parseFloat(exec.amount_in) : parseFloat(exec.amount_out);
+    const ethRaw = isBuy ? parseFloat(exec.amount_out) : parseFloat(exec.amount_in);
+    const usdc = usdcRaw / 1e6;
+    const eth = ethRaw / 1e18;
+    if (eth <= 0) return null;
+    return usdc / eth;
+  } catch {
+    return null;
+  }
+}
+
 // Calculate portfolio value over time from executions
+// Uses execution-time ETH prices derived from swap rates for historical accuracy.
 function calculatePortfolioHistory(
   executions: Execution[],
   currentEthPrice: number
@@ -87,20 +104,19 @@ function calculatePortfolioHistory(
   }
 
   // Track cumulative balances
-  // ethBalance = total ETH accumulated from buys (minus any sold)
-  // totalUsdcSpent = total USDC spent buying ETH (cost basis)
-  // totalUsdcReceived = total USDC received from selling ETH
   let ethBalance = 0;
   let totalUsdcSpent = 0;
   let totalUsdcReceived = 0;
 
-  const history: PortfolioDataPoint[] = [];
+  // Group all swaps by calendar date, tracking running state after each
+  // so we emit one data point per day (last execution of the day wins)
+  const dailyMap = new Map<string, PortfolioDataPoint>();
   const firstDepositDate = new Date(successfulSwaps[0].timestamp);
 
   for (const exec of successfulSwaps) {
     const isBuy = exec.action === 'buy';
-    const inDecimals = isBuy ? 6 : 18; // USDC for buy, ETH for sell
-    const outDecimals = isBuy ? 18 : 6; // ETH for buy, USDC for sell
+    const inDecimals = isBuy ? 6 : 18;
+    const outDecimals = isBuy ? 18 : 6;
 
     const amountIn = parseFloat(exec.amount_in) / Math.pow(10, inDecimals);
     const amountOut = exec.amount_out
@@ -108,19 +124,21 @@ function calculatePortfolioHistory(
       : 0;
 
     if (isBuy) {
-      // Buying ETH with USDC
       ethBalance += amountOut;
       totalUsdcSpent += amountIn;
     } else {
-      // Selling ETH for USDC
       ethBalance -= amountIn;
       totalUsdcReceived += amountOut;
     }
 
-    // Portfolio value = current ETH holdings at current price + any USDC received from sells
-    const totalUsd = ethBalance * currentEthPrice + totalUsdcReceived;
+    // Use the swap rate as the ETH price at this point in time
+    const execEthPrice = deriveEthPrice(exec) ?? currentEthPrice;
 
-    history.push({
+    // Portfolio value at execution time = ETH held * price then + USDC received
+    const totalUsd = ethBalance * execEthPrice + totalUsdcReceived;
+
+    const dateKey = exec.timestamp.split('T')[0]; // YYYY-MM-DD
+    dailyMap.set(dateKey, {
       date: exec.timestamp,
       displayDate: new Date(exec.timestamp).toLocaleDateString('en-US', {
         month: 'short',
@@ -129,25 +147,37 @@ function calculatePortfolioHistory(
       total_usd: Math.max(0, totalUsd),
       eth_balance: ethBalance,
       usdc_balance: totalUsdcReceived,
-      eth_price: currentEthPrice,
+      eth_price: execEthPrice,
       action: exec.action,
     });
   }
 
-  // Current portfolio value = ETH holdings at market price + any USDC from sells
-  const currentValue = ethBalance * currentEthPrice + totalUsdcReceived;
-  const totalDeposited = totalUsdcSpent; // Total cost basis
+  // Build chronological daily history
+  const history = Array.from(dailyMap.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, point]) => point);
 
-  // Calculate APY
+  // Override the last point to use current market price for the latest value
+  if (history.length > 0) {
+    const last = history[history.length - 1];
+    const currentTotal = last.eth_balance * currentEthPrice + last.usdc_balance;
+    history[history.length - 1] = {
+      ...last,
+      total_usd: Math.max(0, currentTotal),
+      eth_price: currentEthPrice,
+    };
+  }
+
+  const currentValue = ethBalance * currentEthPrice + totalUsdcReceived;
+  const totalDeposited = totalUsdcSpent;
+
   const now = new Date();
   const daysActive = Math.max(1, Math.floor((now.getTime() - firstDepositDate.getTime()) / (1000 * 60 * 60 * 24)));
   const yearsActive = daysActive / 365;
 
-  // Profit/loss: current value of holdings vs what was spent
   const profitLoss = currentValue - totalDeposited;
   const profitLossPercent = totalDeposited > 0 ? (profitLoss / totalDeposited) * 100 : 0;
 
-  // APY calculation: annualized return
   let apy = 0;
   if (totalDeposited > 0 && yearsActive > 0 && currentValue > 0) {
     const totalReturn = currentValue / totalDeposited;
