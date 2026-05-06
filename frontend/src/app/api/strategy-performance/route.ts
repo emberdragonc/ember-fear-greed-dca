@@ -12,22 +12,19 @@ const EOA = '0xe3c938c71273bfff7dee21bdd3a8ee1e453bdd1b';
 const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const;
 const WETH = '0x4200000000000000000000000000000000000006' as const;
 const INCEPTION_DATE = new Date('2026-02-06T00:00:00Z');
-const BASE_RPCS = [
-  'https://mainnet.base.org',
-  'https://base.publicnode.com',
-  'https://1rpc.io/base',
-];
+function getBaseRpc(): string {
+  const key = process.env.ALCHEMY_API_KEY || process.env.NEXT_PUBLIC_ALCHEMY_API_KEY;
+  if (key) return `https://base-mainnet.g.alchemy.com/v2/${key}`;
+  return 'https://mainnet.base.org'; // fallback
+}
 
 async function ethCall(to: string, data: string): Promise<string> {
+  const rpc = getBaseRpc();
   const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to, data }, 'latest'] });
-  for (const rpc of BASE_RPCS) {
-    try {
-      const res = await fetch(rpc, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
-      const json = await res.json();
-      if (json.result && json.result !== '0x') return json.result;
-    } catch { /* try next */ }
-  }
-  throw new Error('All Base RPCs failed');
+  const res = await fetch(rpc, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+  const json = await res.json();
+  if (!json.result || json.result === '0x') throw new Error(`eth_call failed: ${JSON.stringify(json.error ?? json)}`);
+  return json.result;
 }
 
 // Cache for 10 minutes
