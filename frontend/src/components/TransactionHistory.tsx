@@ -180,7 +180,7 @@ export function TransactionHistory() {
                 <p className="text-xs text-gray-500">
                   {new Date(exec.timestamp).toLocaleDateString()}
                 </p>
-                {exec.tx_hash ? (
+                {exec.action === 'hold' ? null : exec.tx_hash ? (
                   <a 
                     href={`https://basescan.org/tx/${exec.tx_hash}`}
                     target="_blank"
