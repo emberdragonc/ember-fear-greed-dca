@@ -12,7 +12,23 @@ const EOA = '0xe3c938c71273bfff7dee21bdd3a8ee1e453bdd1b';
 const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const;
 const WETH = '0x4200000000000000000000000000000000000006' as const;
 const INCEPTION_DATE = new Date('2026-02-06T00:00:00Z');
-const BASE_RPC = 'https://mainnet.base.org';
+const BASE_RPCS = [
+  'https://mainnet.base.org',
+  'https://base.publicnode.com',
+  'https://1rpc.io/base',
+];
+
+async function ethCall(to: string, data: string): Promise<string> {
+  const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to, data }, 'latest'] });
+  for (const rpc of BASE_RPCS) {
+    try {
+      const res = await fetch(rpc, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      const json = await res.json();
+      if (json.result && json.result !== '0x') return json.result;
+    } catch { /* try next */ }
+  }
+  throw new Error('All Base RPCs failed');
+}
 
 // Cache for 10 minutes
 let cache: { data: object; ts: number } | null = null;
@@ -46,24 +62,20 @@ export async function GET() {
 
     const supabase = getSupabase();
       // Fetch executions + on-chain balances in parallel
-    const balanceOfCall = (token: string) => ({
-      method: 'POST' as const,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to: token, data: '0x70a08231' + SMART_ACCOUNT.slice(2).padStart(64, '0') }, 'latest'] }),
-    });
-    const [{ data: executions, error }, usdcRes, wethRes, ethPrice] = await Promise.all([
+    const balanceOfData = (addr: string) => '0x70a08231' + addr.slice(2).padStart(64, '0');
+    const [{ data: executions, error }, usdcHex, wethHex, ethPrice] = await Promise.all([
       supabase
         .from('dca_executions')
         .select('action, amount_in, amount_out, status, created_at')
         .eq('user_address', EOA)
         .eq('status', 'success')
         .in('action', ['buy', 'sell']),
-      fetch(BASE_RPC, balanceOfCall(USDC)).then(r => r.json()),
-      fetch(BASE_RPC, balanceOfCall(WETH)).then(r => r.json()),
+      ethCall(USDC, balanceOfData(SMART_ACCOUNT)),
+      ethCall(WETH, balanceOfData(SMART_ACCOUNT)), // smart account holds WETH not native ETH
       getEthPrice(),
     ]);
-    const usdcRaw = BigInt(usdcRes.result || '0x0');
-    const ethRaw = BigInt(wethRes.result || '0x0'); // smart account holds WETH, not native ETH
+    const usdcRaw = BigInt(usdcHex);
+    const ethRaw = BigInt(wethHex);
 
     if (error) throw error;
 
