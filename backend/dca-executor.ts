@@ -24,7 +24,7 @@ import { validateDelegationCaveats, getActiveDelegations } from './delegation-va
 import { initBackendSmartAccount, deployUndeployedAccounts } from './smart-account';
 import { processApprovals } from './approvals';
 import { processSwapsParallel, retrySwapWithOriginalAmounts, runDryRunSimulation } from './swap-engine';
-import { logExecution, updateProtocolStats } from './db-logger';
+import { logExecution, logHoldExecutions, updateProtocolStats } from './db-logger';
 import type { ExecutionResult } from './config';
 
 // ============ IDEMPOTENCY GUARD ============
@@ -154,7 +154,8 @@ async function runDCA() {
 
   if (decision.action === 'hold') {
     console.log('\n✓ Market neutral - No action needed');
-    // Log hold day to DB so it appears in history
+
+    // Log hold day to dca_daily_executions (summary table)
     try {
       await supabase.from('dca_daily_executions').insert({
         execution_date: new Date().toISOString().split('T')[0],
@@ -170,6 +171,12 @@ async function runDCA() {
     } catch (dbErr: any) {
       console.error('[DB] Failed to log hold day:', dbErr?.message);
     }
+
+    // Also log per-wallet hold rows to dca_executions so it shows in user DCA History
+    const holdDelegations = await getActiveDelegations(TARGET_WALLET);
+    const userAddresses = holdDelegations.map((d: any) => d.user_address);
+    await logHoldExecutions(userAddresses, fg.value);
+
     return;
   }
 

@@ -88,6 +88,32 @@ export async function logFailedAttempt(
   }
 }
 
+export async function logHoldExecutions(
+  userAddresses: string[],
+  fgValue: number
+) {
+  if (userAddresses.length === 0) return;
+
+  const rows = userAddresses.map(addr => ({
+    user_address: addr,
+    fear_greed_index: fgValue,
+    action: 'hold',
+    amount_in: '0',
+    amount_out: '0',
+    fee_collected: '0',
+    tx_hash: null,
+    status: 'success',
+    created_at: new Date().toISOString(),
+  }));
+
+  const { error } = await supabase.from('dca_executions').insert(rows);
+  if (error) {
+    console.error('[DB] Failed to log hold executions:', error.message);
+  } else {
+    console.log(`[DB] Hold logged for ${userAddresses.length} wallet(s)`);
+  }
+}
+
 export async function updateProtocolStats(volume: bigint, fees: bigint) {
   const { error, attempts } = await withRetry(
     async () => {
