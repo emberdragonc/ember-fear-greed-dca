@@ -5,8 +5,7 @@
 
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { createPublicClient, http, erc20Abi } from 'viem';
-import { base } from 'viem/chains';
+
 
 const SMART_ACCOUNT = '0x4f38dde0be7d92abde9f3d4ba29a92e02bd71bd7' as const;
 const EOA = '0xe3c938c71273bfff7dee21bdd3a8ee1e453bdd1b';
@@ -45,25 +44,29 @@ export async function GET() {
     }
 
     const supabase = getSupabase();
-    const publicClient = createPublicClient({ chain: base, transport: http(BASE_RPC) });
-
-    // Fetch executions + on-chain balances in parallel
-    const [{ data: executions, error }, usdcRaw, ethRaw, ethPrice] = await Promise.all([
+      // Fetch executions + on-chain balances in parallel
+    const balanceOfData = '0x70a08231' + SMART_ACCOUNT.slice(2).padStart(64, '0');
+    const [{ data: executions, error }, usdcRes, ethRes, ethPrice] = await Promise.all([
       supabase
         .from('dca_executions')
         .select('action, amount_in, amount_out, status, created_at')
         .eq('user_address', EOA)
         .eq('status', 'success')
         .in('action', ['buy', 'sell']),
-      publicClient.readContract({
-        address: USDC,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [SMART_ACCOUNT],
-      }),
-      publicClient.getBalance({ address: SMART_ACCOUNT }),
+      fetch(BASE_RPC, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to: USDC, data: balanceOfData }, 'latest'] }),
+      }).then(r => r.json()),
+      fetch(BASE_RPC, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'eth_getBalance', params: [SMART_ACCOUNT, 'latest'] }),
+      }).then(r => r.json()),
       getEthPrice(),
     ]);
+    const usdcRaw = BigInt(usdcRes.result || '0x0');
+    const ethRaw = BigInt(ethRes.result || '0x0');
 
     if (error) throw error;
 
