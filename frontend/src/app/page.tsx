@@ -25,6 +25,14 @@ export default function Home() {
   const { state: delegationState } = useDelegation();
   const [isFunded, setIsFunded] = useState(false);
   const [showHowItWorks, setShowHowItWorks] = useState(true);
+  const [strategyPerf, setStrategyPerf] = useState<{ returnSinceInception: number; annualizedReturn: number; inceptionDate: string; daysRunning: number } | null>(null);
+
+  useEffect(() => {
+    fetch('/api/strategy-performance')
+      .then(r => r.json())
+      .then(d => { if (!d.error) setStrategyPerf(d); })
+      .catch(() => {});
+  }, []);
   
   // User has delegation if status is 'signed' (active delegation exists)
   const hasDelegation = delegationState.status === 'signed';
@@ -170,7 +178,7 @@ export default function Home() {
             </div>
 
             {/* 3. Live F&G + Backtest Side by Side - Proof it works */}
-            <div className="flex flex-col md:flex-row gap-4 max-w-2xl w-full mb-10">
+            <div className="flex flex-col md:flex-row gap-4 max-w-4xl w-full mb-10">
               {/* Live F&G Status */}
               {fgData && (
                 <div className="flex-1 p-5 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-sm">
@@ -219,6 +227,32 @@ export default function Home() {
                   <span className="text-sm text-gray-500">vs HODL ETH</span>
                 </div>
               </div>
+
+              {/* Live Strategy Performance */}
+              {strategyPerf && (
+                <div className="flex-1 p-5 rounded-2xl bg-gradient-to-br from-violet-500/10 to-indigo-500/10 border border-violet-500/20">
+                  <p className="text-xs text-violet-400 font-medium mb-3">🟣 LIVE PERFORMANCE</p>
+                  <div className="flex items-baseline gap-2 mb-2">
+                    <span className={`text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r ${
+                      strategyPerf.returnSinceInception >= 0
+                        ? 'from-violet-400 to-indigo-400'
+                        : 'from-red-400 to-red-600'
+                    }`}>
+                      {strategyPerf.returnSinceInception >= 0 ? '+' : ''}{strategyPerf.returnSinceInception}%
+                    </span>
+                    <span className="text-sm text-gray-400">since inception</span>
+                  </div>
+                  <div className="flex items-baseline gap-2">
+                    <span className={`text-xl font-semibold ${
+                      strategyPerf.annualizedReturn >= 0 ? 'text-violet-300' : 'text-red-400'
+                    }`}>
+                      {strategyPerf.annualizedReturn >= 0 ? '+' : ''}{strategyPerf.annualizedReturn}%
+                    </span>
+                    <span className="text-sm text-gray-500">annualized</span>
+                  </div>
+                  <p className="text-xs text-gray-600 mt-3">Since {strategyPerf.inceptionDate} · {strategyPerf.daysRunning}d</p>
+                </div>
+              )}
             </div>
 
             {/* 4. Features - Value props */}
