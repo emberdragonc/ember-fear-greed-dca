@@ -1,13 +1,18 @@
 // Strategy Performance API
-// Returns live return metrics based on the inception wallet's execution history.
-// Wallet 0x4F38DDE0bE7d92ABDE9F3D4ba29a92E02bD71Bd7 (smart account)
-// EOA: 0xe3c938c71273bfff7dee21bdd3a8ee1e453bdd1b — running since inception (Feb 6 2026)
+// Returns live return metrics matching the wallet dashboard calculation.
+// Uses smart account 0x4F38DDE0bE7d92ABDE9F3D4ba29a92E02bD71Bd7 (inception wallet).
+// EOA: 0xe3c938c71273bfff7dee21bdd3a8ee1e453bdd1b
 
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { createPublicClient, http, erc20Abi } from 'viem';
+import { base } from 'viem/chains';
 
-const INCEPTION_WALLET = '0xe3c938c71273bfff7dee21bdd3a8ee1e453bdd1b';
+const SMART_ACCOUNT = '0x4f38dde0be7d92abde9f3d4ba29a92e02bd71bd7' as const;
+const EOA = '0xe3c938c71273bfff7dee21bdd3a8ee1e453bdd1b';
+const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const;
 const INCEPTION_DATE = new Date('2026-02-06T00:00:00Z');
+const BASE_RPC = 'https://mainnet.base.org';
 
 // Cache for 10 minutes
 let cache: { data: object; ts: number } | null = null;
@@ -24,7 +29,7 @@ async function getEthPrice(): Promise<number> {
   try {
     const res = await fetch(
       'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd',
-      { next: { revalidate: 60 } }
+      { cache: 'no-store' }
     );
     const json = await res.json();
     return json?.ethereum?.usd ?? 2000;
@@ -35,64 +40,77 @@ async function getEthPrice(): Promise<number> {
 
 export async function GET() {
   try {
-    // Serve from cache if fresh
     if (cache && Date.now() - cache.ts < CACHE_TTL) {
       return NextResponse.json(cache.data);
     }
 
     const supabase = getSupabase();
+    const publicClient = createPublicClient({ chain: base, transport: http(BASE_RPC) });
 
-    const { data: executions, error } = await supabase
-      .from('dca_executions')
-      .select('action, amount_in, amount_out, status, created_at')
-      .eq('user_address', INCEPTION_WALLET)
-      .eq('status', 'success')
-      .in('action', ['buy', 'sell']);
+    // Fetch executions + on-chain balances in parallel
+    const [{ data: executions, error }, usdcRaw, ethRaw, ethPrice] = await Promise.all([
+      supabase
+        .from('dca_executions')
+        .select('action, amount_in, amount_out, status, created_at')
+        .eq('user_address', EOA)
+        .eq('status', 'success')
+        .in('action', ['buy', 'sell']),
+      publicClient.readContract({
+        address: USDC,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [SMART_ACCOUNT],
+      }),
+      publicClient.getBalance({ address: SMART_ACCOUNT }),
+      getEthPrice(),
+    ]);
 
     if (error) throw error;
 
-    // Accumulate cost basis (USDC, 6 decimals) and ETH (18 decimals)
-    let totalUSDCSpent = 0n;
-    let totalUSDCReceived = 0n;
-    let totalETHAccumulated = 0n;
-    let totalETHSold = 0n;
+    // Reconstruct cumulative balances from execution history
+    let totalUsdcSpent = 0;   // USDC deployed buying ETH (6 dec)
+    let ethAccumulated = 0;   // ETH received from buys (18 dec)
+    let totalUsdcReceived = 0; // USDC from sells
 
     for (const ex of executions || []) {
       if (ex.action === 'buy') {
-        totalUSDCSpent += BigInt(ex.amount_in || 0);
-        totalETHAccumulated += BigInt(ex.amount_out || 0);
+        totalUsdcSpent += parseFloat(ex.amount_in) / 1e6;
+        ethAccumulated += ex.amount_out ? parseFloat(ex.amount_out) / 1e18 : 0;
       } else if (ex.action === 'sell') {
-        totalETHSold += BigInt(ex.amount_in || 0);
-        totalUSDCReceived += BigInt(ex.amount_out || 0);
+        ethAccumulated -= parseFloat(ex.amount_in) / 1e18;
+        totalUsdcReceived += ex.amount_out ? parseFloat(ex.amount_out) / 1e6 : 0;
       }
     }
 
-    const netUSDCSpent = Number(totalUSDCSpent - totalUSDCReceived) / 1e6;
-    const netETHHeld = Number(totalETHAccumulated - totalETHSold) / 1e18;
+    const currentOnChainUsdc = Number(usdcRaw) / 1e6;
+    const currentOnChainEth = Number(ethRaw) / 1e18;
 
-    const ethPrice = await getEthPrice();
-    const currentValue = netETHHeld * ethPrice;
+    // Same formula as usePortfolioHistory
+    // totalDeposited = all USDC ever spent + USDC still in account = original deposit
+    const totalDeposited = totalUsdcSpent + currentOnChainUsdc;
+    const currentValue = currentOnChainEth * ethPrice + currentOnChainUsdc + totalUsdcReceived;
 
-    // Guard against division by zero
-    if (netUSDCSpent <= 0) {
+    if (totalDeposited <= 0) {
       return NextResponse.json({ error: 'Insufficient data' }, { status: 503 });
     }
 
-    const returnPct = ((currentValue / netUSDCSpent) - 1) * 100;
+    const profitLossPercent = ((currentValue - totalDeposited) / totalDeposited) * 100;
 
     const now = new Date();
-    const daysRunning = (now.getTime() - INCEPTION_DATE.getTime()) / (1000 * 60 * 60 * 24);
-    const years = daysRunning / 365;
-    const annualizedReturn = (Math.pow(1 + returnPct / 100, 1 / years) - 1) * 100;
+    const daysRunning = Math.max(1, Math.floor((now.getTime() - INCEPTION_DATE.getTime()) / (1000 * 60 * 60 * 24)));
+    const yearsActive = daysRunning / 365;
+    const annualizedReturn = totalDeposited > 0 && currentValue > 0
+      ? (Math.pow(currentValue / totalDeposited, 1 / yearsActive) - 1) * 100
+      : 0;
 
     const result = {
-      returnSinceInception: parseFloat(returnPct.toFixed(1)),
-      annualizedReturn: parseFloat(annualizedReturn.toFixed(1)),
+      returnSinceInception: parseFloat(profitLossPercent.toFixed(2)),
+      annualizedReturn: parseFloat(annualizedReturn.toFixed(2)),
       inceptionDate: INCEPTION_DATE.toISOString().split('T')[0],
-      daysRunning: Math.floor(daysRunning),
+      daysRunning,
       ethPrice,
-      netETHHeld: parseFloat(netETHHeld.toFixed(6)),
-      netUSDCSpent: parseFloat(netUSDCSpent.toFixed(2)),
+      currentValue: parseFloat(currentValue.toFixed(2)),
+      totalDeposited: parseFloat(totalDeposited.toFixed(2)),
     };
 
     cache = { data: result, ts: Date.now() };
